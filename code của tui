@@ -1,0 +1,31 @@
+void TriggerNormalStageStart() {
+
+//Kiểm tra state hiện tại có thuộc Normal hay không
+if (State.Now == NML || State.Now == ZEN || State.Now == HYR) {
+//NML開始時初期化処理 khởi tại trạng thái
+InitializeNormalStageState();
+
+//Bật cờ hiển thị tiêu đề
+TitleDisplayFlag = TRUE;
+
+//BIG示唆抽せん			
+int bigHint = xoSo();
+
+//CASE 1: bigHint >= 11 (cao)
+if (bigHint >= 11) {
+BigHintGameCountType = TYPE_16; 
+bigHint -= 10; } 
+
+//CASE 2: bigHint >= 1 (thấp)
+else if (bigHint >= 1) {
+//BIG示唆ｹﾞｰﾑ数抽せん
+BigHintGameCountType = GetBigHintGameCountRandom(); }
+
+//朝一1G目だけﾌﾗｸﾞ]=1?
+if (isFirstGame == FALSE) {
+bool giuStage = false;
+bool thietLapStage = false; 
+
+}
+}
+}
