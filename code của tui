@@ -25,7 +25,27 @@ BigHintGameCountType = GetBigHintGameCountRandom(); }
 if (isFirstGame == FALSE) {
 bool giuStage = false;
 bool thietLapStage = false; 
+//Cái này có nghĩa là nếu không phải game đầu buổi sáng thì mặc định không cần giữ stage và không cần set stage mới luôn
+
+
+//Kiểm tra trạng thái của game trước đó
+if (State.Old >= MBT) {
+//xét trường hợp đặc biệt: BKZ + MBT_TYPE
+if (State.Old == BKZ && OldBKZType == MBT_TYPE) {
+//Nếu là trường hợp đặc biệt thì giữ stage BKZ
+CurrentStage = BKZStage;
+keepStage = true; }
+
+else {
+//Nếu không phải trường hợp đặc biệt thì random lại khi không dính cả 2
+CZFlag = FALSE;    // Hủy CZ mode
+ItemFlag = FALSE;  // Hủy item bonus
+CurrentStage == GetRandomStage; 
+}
+
+ }
 
 }
 }
 }
+
