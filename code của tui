@@ -2,7 +2,7 @@ void TriggerNormalStageStart() {
 
 //Kiểm tra state hiện tại có thuộc Normal hay không
 if (State.Now == NML || State.Now == ZEN || State.Now == HYR) {
-//NML開始時初期化処理 khởi tại trạng thái
+//NML開始時初期化処理 khởi tạo trạng thái
 InitializeNormalStageState();
 
 //Bật cờ hiển thị tiêu đề
@@ -21,31 +21,60 @@ else if (bigHint >= 1) {
 //BIG示唆ｹﾞｰﾑ数抽せん
 BigHintGameCountType = GetBigHintGameCountRandom(); }
 
-//朝一1G目だけﾌﾗｸﾞ]=1?
-if (isFirstGame == FALSE) {
+// Stage control
 bool giuStage = false;
 bool thietLapStage = false; 
-//Cái này có nghĩa là nếu không phải game đầu buổi sáng thì mặc định không cần giữ stage và không cần set stage mới luôn
-
-
+//Ban đầu chưa quyết định, sẽ dựa vào state trước để quyết định giữ hay random
+//朝一1G目だけﾌﾗｸﾞ]=1?
+if (isFirstGame == FALSE) {
 //Kiểm tra trạng thái của game trước đó
 if (State.Old >= MBT) {
 //xét trường hợp đặc biệt: BKZ + MBT_TYPE
 if (State.Old == BKZ && OldBKZType == MBT_TYPE) {
 //Nếu là trường hợp đặc biệt thì giữ stage BKZ
 CurrentStage = BKZStage;
-keepStage = true; }
+giuStage = true; }
 
 else {
-//Nếu không phải trường hợp đặc biệt thì random lại khi không dính cả 2
+//Nếu không phải trường hợp đặc biệt thì random lại 
 CZFlag = FALSE;    // Hủy CZ mode
 ItemFlag = FALSE;  // Hủy item bonus
-CurrentStage == GetRandomStage; 
-}
+ItemSettingFlag = FALSE;
 
- }
+InternalHintCounter = 50;
+
+CurrentStage = GetRandomStage_AT();
+
+//Random stage mới
+CurrentStage = GetRandomStage(); 
+thietLapStage = true;
+} }
+else { giuStage = true; 
+}
+}else {
+// game đầu ngày
+CZFlag = FALSE;
+ItemFlag = FALSE;
+ItemSettingFlag = FALSE;
+
+// Counter
+InternalHintCounter = 50;
+
+// ⭐ AT or default (giống code công ty)
+CurrentStage = GetRandomStage_AT();
 
 }
+//Trường hợp CZ / GMB
+if (State.Old == CZ || State.Old == GMB)
+{
+CurrentStage = GetRandomCZStage();
+
+thietLapStage = true;
 }
-}
+// Set giới hạn đổi stage
+if (thietLapStage)
+{
+StageChangeLimit = GetRandomStageChangeLimit();
+NextStage = CurrentStage;
+} 
 
