@@ -11,12 +11,12 @@ TitleDisplayFlag = TRUE;
 //BIG示唆抽せん			
 int bigHint = xoSo();
 
-//CASE 1: bigHint >= 11 (cao)
+//bigHint >= 11 (cao)
 if (bigHint >= 11) {
 BigHintGameCountType = TYPE_16; 
 bigHint -= 10; } 
 
-//CASE 2: bigHint >= 1 (thấp)
+//bigHint >= 1 (thấp)
 else if (bigHint >= 1) {
 //BIG示唆ｹﾞｰﾑ数抽せん
 BigHintGameCountType = GetBigHintGameCountRandom(); }
