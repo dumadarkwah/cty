@@ -32,8 +32,9 @@ if (State.Old >= MBT) {
 if (State.Old == BKZ && OldBKZType == MBT_TYPE) {
 //Nếu là trường hợp đặc biệt thì giữ stage BKZ
 CurrentStage = BKZStage;
-StageChangeLimit = BKZStayGame;
-NextStage = CurrenStage;
+StageChangeLimit = BKZStageLimit;
+StageStayGame    = BKZStayGame;
+NextStage = CurrentStage;
 giuStage = true; }
 
 else {
@@ -43,11 +44,9 @@ ItemFlag = FALSE;  //Hủy item bonus
 ItemSettingFlag = FALSE;
 
 InternalHintCounter = 50;
-
+//Random stage mới 
 CurrentStage = GetRandomStage_AT();
 
-//Random stage mới
-CurrentStage = GetRandomStage(); 
 thietLapStage = true;
 } }
 else { giuStage = true; 
