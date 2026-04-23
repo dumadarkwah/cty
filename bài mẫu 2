@@ -1,0 +1,115 @@
+// (NML)ステージ設定
+		SubA_PrjStgNml_TrgSetStage();
+		// ｱｻｰﾄ_ﾚﾊﾞｰ
+		SubA_PrjStgNml_AssLev();
+#if 0
+		// ペナ用処理
+		// 【HMﾌﾗｸﾞ】=0?
+		if (g_Base.Stg.Mn.HmFlg == 0)
+		{
+			// 【当該出玉状態】=非有利?
+			if (g_Base.Stg.Mn.State.Now == D_DDM_STATE_HYR)
+			{
+				// 非有利ならペナ扱いにしない
+				penaFlg = FALSE;
+			}
+			else
+			{
+				penaFlg = TRUE;
+			}
+		}
+
+		// ペナ？
+		if (penaFlg)
+		{
+			// ﾍﾟﾅ用_ﾚﾊﾞｰ
+			SubA_PrjStgNml_PenLev();
+		}
+		else
+		{
+			// [ｽﾃｰｼﾞ]=未設定?
+			if (g_Base.Stg.Nml.SubANmlStgNow == E_SUBA_NML_STG_NON)
+			{
+				// ｽﾃｰｼﾞ未設定時処理
+				SubA_PrjStgNml_StgNon();
+			}
+			// NML共通_事前処理
+			SubA_PrjStgNml_ComPre();
+			// その他処理A_通常ｽﾃｰｼﾞ
+			SubA_PrjStgNml_NmlStgOthA();
+			// 主演出処理_通常ｽﾃｰｼﾞ
+			SubA_PrjStgNml_NmlStgMain();
+			// その他処理B_通常ｽﾃｰｼﾞ
+			SubA_PrjStgNml_NmlStgOthB();
+			// 副演出処理_通常ｽﾃｰｼﾞ
+			SubA_PrjStgNml_NmlStgDep();
+			// (NML)ステージ設定
+			SubA_PrjStgNml_TrgSetStage();
+			// ｱｻｰﾄ_ﾚﾊﾞｰ
+			SubA_PrjStgNml_AssLev();
+		}
+#endif
+	}
+	// 出玉状態 GM
+	else if (g_Base.Stg.Mn.State.Now == D_DDM_STATE_GMA ||
+		g_Base.Stg.Mn.State.Now == D_DDM_STATE_GMB)
+	{
+		// 【HMﾌﾗｸﾞ】=0?
+		if (g_Base.Stg.Mn.HmFlg == 0)
+		{
+			// ﾍﾟﾅ用_ﾚﾊﾞｰ
+			SubA_PrjStgGm_PenLev();
+		}
+		// 【当該出玉状態】=GMA?
+		else if (g_Base.Stg.Mn.State.Now == D_DDM_STATE_GMA)
+		{
+			// [ｽﾃｰｼﾞ]=未設定?
+			if (g_Base.Stg.Nml.SubAGmStgNow == E_SUBA_NML_GM_STG_NON)
+			{
+				g_Base.Stg.Nml.SubAGmStgNow = E_SUBA_NML_GM_STG_DEF;
+			}
+
+			if (g_Base.Cmn.RamErrorClearFlag == TRUE)
+			{
+				SUBA_ASSERT(FALSE);
+				g_Base.Stg.Nml.SubAGmGmaGijirenEmbTyp = E_SUBA_GM_GMA_GIJIREN_EMB_TYP_DEF;
+			}
+
+			// その他処理A_GMA
+			SubA_PrjStgGm_GmaOthA();
+			// 主演出処理_GMA
+			SubA_PrjStgGm_GmaMain();
+			// 副演出処理_GMA
+			SubA_PrjStgGm_GmaDep();
+			// その他処理B_GMA
+			SubA_PrjStgGm_GmaOthB();
+			// (GM)ステージ設定
+			SubA_PrjStgGm_TrgSetStage();
+			// ｱｻｰﾄﾚﾊﾞｰ_GMA
+			SubA_PrjStgGm_GmaAssLev();
+
+			// [GMA開始時ﾌﾗｸﾞ]←0
+			g_Base.Stg.Nml.SubAGmGmaStartFlag = FALSE;
+		}
+		else
+		{
+			// その他処理A_GMB
+			SubA_PrjStgGm_GmbOthA();
+			// 主演出処理_GMB
+			SubA_PrjStgGm_GmbMain();
+			// 副演出処理_GMB
+			SubA_PrjStgGm_GmbDep();
+			// その他処理B_GMB
+			SubA_PrjStgGm_GmbOthB();
+			// (GM)ステージ設定
+			SubA_PrjStgGm_TrgSetStage();
+			// ｱｻｰﾄﾚﾊﾞｰ_GMB
+			SubA_PrjStgGm_GmbAssLev();
+		}
+	}
+
+	else
+	{
+		// 処理ナシ
+	}
+}
