@@ -64,11 +64,11 @@ CurrentStage = GetRandomStage_AT();
 
 }
 //Trường hợp CZ hoặc GMB
-if (State.Old == CZ || State.Old == GMB)
-{
-CurrentStage = GetRandomCZStage();
-
-thietLapStage = true;
+if (giuStage) {
+    if (State.Old == CZ || State.Old == GMB) {
+        CurrentStage = GetRandomCZStage();
+        thietLapStage = true;
+    }
 }
 // Set giới hạn đổi stage
 if (thietLapStage)
