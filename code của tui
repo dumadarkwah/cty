@@ -25,7 +25,6 @@ BigHintGameCountType = GetBigHintGameCountRandom(); }
 bool giuStage = false;
 bool thietLapStage = false; 
 //Ban đầu chưa quyết định, sẽ dựa vào state trước để quyết định giữ hay random
-//朝一1G目だけﾌﾗｸﾞ]=1?
 if (isFirstGame == FALSE) {
 //Kiểm tra trạng thái của game trước đó
 if (State.Old >= MBT) {
@@ -39,8 +38,8 @@ giuStage = true; }
 
 else {
 //Nếu không phải trường hợp đặc biệt thì random lại 
-CZFlag = FALSE;    // Hủy CZ mode
-ItemFlag = FALSE;  // Hủy item bonus
+CZFlag = FALSE;    //Hủy CZ mode
+ItemFlag = FALSE;  //Hủy item bonus
 ItemSettingFlag = FALSE;
 
 InternalHintCounter = 50;
