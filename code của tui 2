@@ -1,0 +1,6 @@
+//Setting trạng thái (NML)
+setStage();
+//Xác nhận level
+assLev();
+
+//Quy trình xử lý lỗi
