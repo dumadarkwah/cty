@@ -62,11 +62,10 @@ ItemSettingFlag = FALSE;
 // Counter
 InternalHintCounter = 50;
 
-// ⭐ AT or default (giống code công ty)
 CurrentStage = GetRandomStage_AT();
 
 }
-//Trường hợp CZ / GMB
+//Trường hợp CZ hoặc GMB
 if (State.Old == CZ || State.Old == GMB)
 {
 CurrentStage = GetRandomCZStage();
