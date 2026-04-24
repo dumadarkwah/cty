@@ -1,6 +1,56 @@
-//Setting trạng thái (NML)
-setStage();
-//Xác nhận level
-assLev();
+void UpdateGame()
+{
+    if (state == NML || state == ZEN || state == HYR)
+    {
+        setNormalStage();   //chọn stage
+        normalLever();      //xử lý lượt chơi
+    }
 
-//Quy trình xử lý lỗi
+    else if (state == GMA || state == GMB)
+    {
+        //HM = 0 sẽ bị phạt
+        if (HMFlag == 0)
+        {
+            penaltyGM();
+            return;
+        }
+
+        //GMA
+        if (state == GMA)
+        {
+            //chưa có stage sẽ set mặc định
+            if (gmStage == NONE)
+            {
+                gmStage = DEFAULT; }
+
+            /nếu lỗi thì reset
+            if (errorFlag == TRUE)
+            {
+                effectType = DEFAULT;  }
+
+            //chạy game
+            runGMA();
+
+            //set stage + xử lý
+            setGMStage();
+            leverGMA();
+
+            //reset flag
+            gmaStartFlag = 0;
+        }
+
+        //GMB
+        else
+        {
+            runGMB();
+            setGMStage();
+            leverGMB();
+        }
+    }
+
+    //KHÁC
+    else
+    {
+        // không làm gì
+    }
+}
