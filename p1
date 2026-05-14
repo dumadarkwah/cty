@@ -347,3 +347,717 @@ if (g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp == 3) {
 else {
 	//NO
 }
+
+
+		//通常ｽﾃｰｼﾞ_ﾚﾊﾞｰ
+
+		//その他処理A_通常ｽﾃｰｼﾞ
+
+		//--------------------------------------------
+		//事前処理_通常ｽﾃｰｼﾞ
+		//--------------------------------------------
+		SubA_PrjStgNml_NmlStgPre();
+
+		//[通常ｽﾃ開始時初期化ﾌﾗｸﾞ]=1?
+		if (g_Base.Stg.Nml.SubANmlStaIniFlg == TRUE) {
+			//YES
+			//通常ｽﾃ開始時初期化処理
+			SubA_PrjStgNml_StgStaIni();
+
+			// 前兆全体G
+			g_Base.Stg.Nml.SubANmlZenAllG = 0;
+			// 前兆進行G
+			g_Base.Stg.Nml.SubANmlZenPrgG = 0;
+			// 前兆残G
+			g_Base.Stg.Nml.SubANmlZenZanG = 0;
+			// ﾌﾞﾛｯｸ全体G
+			g_Base.Stg.Nml.SubANmlBlkAllG = 0;
+			// ﾌﾞﾛｯｸ残G
+			g_Base.Stg.Nml.SubANmlBlkZanG = 0;
+			// ﾌﾞﾛｯｸ回数
+			g_Base.Stg.Nml.SubANmlBlkNum = 0;
+			// 予約ｼﾅﾘｵG
+			g_Base.Stg.Nml.SubANmlSceYoyG = 0;
+			// ｼﾅﾘｵ開始G
+			g_Base.Stg.Nml.SubANmlSceStaG = 0;
+			// ｼﾅﾘｵ開始までG
+			g_Base.Stg.Nml.SubANmlSceForStaG = 0;
+			// NM副ｶｳﾝﾀ
+			g_Base.Stg.Nml.SubANmlNMSub = 0;
+			// NM副禁止G
+			g_Base.Stg.Nml.SubANmlNMFukuKinshiG = 0;
+			// SU文言制限ｶｳﾝﾀ
+			g_Base.Stg.Nml.SubANmlSUBungenSeigenKauntaa = 0;
+			// 連続演出前兆終了後ﾌﾗｸﾞ
+			g_Base.Stg.Nml.SubANmlCntPerfPrmEndFlg = FALSE;
+			// 暗転ｽﾃﾁｪﾝ後ﾌﾗｸﾞ
+			g_Base.Stg.Nml.SubANmlDarkTransStagingEndflg = FALSE;
+			// 暗転ｽﾃﾁｪﾝ完了済みﾌﾗｸﾞ
+			g_Base.Stg.Nml.SubANmlDarkTransStagingCompflg = FALSE;
+
+			//[色変化中前兆ﾌﾗｸﾞ]=1?
+			if (g_Base.Stg.Nml.SubANmlUiColChgZenFlg == TRUE) {
+				//YES
+				//[共通_通常時表示G]-[UI色変化G数]≦7
+				if (g_Base.Cmn.NmlCounter, g_Base.Stg.Nml.SubANmlUiChgNum <= 7)
+				{
+					//YES
+					//前遊技_[前兆種別]=3?
+					if (g_Base.Stg.Nml.SubANmlZenTyp_Old == 3) {
+						//YES
+					}
+					
+				}
+				else {
+					//NO
+					//[ｽﾃｰｼﾞ]=5(女神像)?
+					if (E_T_ACEDATA_ETC_UI_X_NML_STATUE == TRUE) {
+						//YES
+					}
+					else {
+						//NO
+						//[ｹﾞｰﾑ数種別]←白
+						g_Base.Stg.Nml.SubANmlGamNumTyp == E_SUBA_NML_GAMNUM_TYP_WHI;
+
+						//[色変化中前兆ﾌﾗｸﾞ]←0
+						g_Base.Stg.Nml.SubANmlUiColChgZenFlg = FALSE;
+
+						//[変化抽せん済ﾌﾗｸﾞ]←0
+						g_Base.Stg.Nml.SubANmlChgLotFlg = FALSE;
+
+					}
+
+				}
+			}
+			
+		}
+
+		//前兆管理処理_通常ｽﾃｰｼﾞ
+		SubA_PrjStgNml_ZenKan();
+		//[前兆再設定ﾌﾗｸﾞ]=1?
+		if (g_Base.Stg.Nml.SubANmlZenSaiSetFlg == TRUE) {
+			//YES
+			//前兆再設定処理_通常ｽﾃ
+			SubA_PrjStgNml_ZenSaiSet();
+			//[ﾌﾞﾛｯｸ状況] + 1
+			g_Base.Stg.Nml.SubANmlBlkSts++;
+
+			//ｽﾃﾁｪﾝ予約抽せん
+			result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_STG_CHG_YOY);
+
+			//[ｽﾃﾁｪﾝ予約]←結果
+			g_Base.Stg.Nml.SubANmlStgChgYoy = result;
+
+			//[ﾌﾞﾛｯｸ回数]>[ﾌﾞﾛｯｸ状況]? 
+			if (g_Base.Stg.Nml.SubANmlBlkNum > g_Base.Stg.Nml.SubANmlBlkSts) {
+				//YES
+				//ﾌﾞﾛｯｸG数抽せん_2回目_通常ｽﾃ
+				result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_BLK_G_2_NML_STG);
+
+				//[ﾌﾞﾛｯｸ全体G]←結果
+				g_Base.Stg.Nml.SubANmlBlkAllG = result;
+
+				//[ﾌﾞﾛｯｸ残G]←[ﾌﾞﾛｯｸ全体G]-1
+				g_Base.Stg.Nml.SubANmlBlkZanG = g_Base.Stg.Nml.SubANmlBlkAllG - 1;
+			}
+			else {
+				//NO
+				//[ﾌﾞﾛｯｸ全体G]←[前兆全体G]-[前兆進行G]+1
+				g_Base.Stg.Nml.SubANmlBlkAllG = g_Base.Stg.Nml.SubANmlZenAllG - g_Base.Stg.Nml.SubANmlZenPrgG + 1;
+
+				//[ﾌﾞﾛｯｸ残G]←[ﾌﾞﾛｯｸ全体G]-1
+				g_Base.Stg.Nml.SubANmlBlkZanG = g_Base.Stg.Nml.SubANmlBlkAllG - 1;
+			}
+		}
+		
+
+		//[前兆種別]=未設定?
+		if (g_Base.Stg.Nml.SubANmlZenTyp == E_KMR_ENS_STATE_NON) {
+			//NO
+			//[ｹﾞｰﾑ数種別]≧1?
+			if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 1) {
+				//NO
+				//ｽﾃﾁｪﾝ前兆判定
+				result = SubA_PrjCmn_SubLotFunc_GetEctLot(D_LOT_O_NM_SUTECHEN_ZENCHOU_HANTEI);
+
+				//結果=1?
+				if (result == 1) {
+					//YES
+					//[ﾌﾞﾛｯｸ残G]=0?
+					if (g_Base.Stg.Nml.SubANmlBlkZanG == 0) {
+						//YES
+						//煽りAｽﾃﾁｪﾝ時_例外処理判定
+						result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_ZEN_TYP_URA_STG);
+
+						//結果=1?
+						if (result == 1) {
+							//YES 
+							//[ｽﾃﾁｪﾝ予約]←未設定
+							g_Base.Stg.Nml.SubANmlStgChgYoy = D_LOT_O_NML_STG_CHG_YOY;
+
+							//【当該出玉状態】=ZEN?
+							if (g_Base.Stg.Mn.State.Now == D_DDM_STATE_ZEN) {
+								//YES
+							}
+							else {
+								//NO
+								//裏前兆許可抽せん
+								result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_URA_ZEN_OK);
+
+								//結果=0?
+								if (result == 0) {
+									//YES
+								}
+								else {
+									//NO
+									//裏前兆当否抽せん
+									result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_URA_ZEN_TOH);
+
+									//結果=0?
+									if (result == 0) {
+										//YES
+									}
+									else {
+										//NO
+										//前兆起点役設定
+										result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_ZEN_KIT_YAK);
+
+										//[裏起点役]←結果
+										g_Base.Stg.Nml.SubANmlUraKitYak = result;
+
+										//裏前兆G抽せん
+										result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_URA_ZEN_G);
+
+										//[裏前兆全体G]←結果
+										g_Base.Stg.Nml.SubANmlUraZenAllG = result;
+
+										//[裏前兆残G]←[裏前兆全体G]-1
+										g_Base.Stg.Nml.SubANmlUraZenZanG = g_Base.Stg.Nml.SubANmlUraZenAllG - 1;
+
+										//[裏前兆進行G]←1
+										g_Base.Stg.Nml.SubANmlUraZenPrgG = 1;
+
+										//[ｹﾞｰﾑ数種別]=白?
+										if (g_Base.Stg.Nml.SubANmlGamNumTyp == E_SUBA_NML_GAMNUM_TYP_WHI) {
+											//YES
+										}
+										else {
+											//NO
+											//[色変化中前兆ﾌﾗｸﾞ]←1
+											g_Base.Stg.Nml.SubANmlUiColChgZenFlg = 1;
+
+										}
+
+										//ｼﾅﾘｵ中?
+										if (SubA_PrjCmn_IsSenarioRun(&g_Base.Stg.Matagi.MainSnr) == FALSE) {
+											//NO
+											//[本前兆ﾌﾗｸﾞ]=0且つ【当該出玉状態】=ZEN?
+											if (g_Base.Stg.Nml.SubANmlHonZenFlg == FALSE &&
+												g_Base.Stg.Mn.State.Now == D_DDM_STATE_ZEN) {
+												//YES
+												//【汎用遊技数Aｶｳﾝﾀ】>[前兆残G]+2?
+												if (g_Base.Stg.Mn.CmnA_PlayCount > g_Base.Stg.Nml.SubANmlZenZanG + 2) {
+													//NO
+													//【汎用遊技数Aｶｳﾝﾀ】>[ﾌﾞﾛｯｸ残G]+2?
+													if (g_Base.Stg.Mn.CmnA_PlayCount > g_Base.Stg.Nml.SubANmlBlkZanG + 2) {
+														//YES
+														//前兆再設定時ｼﾅﾘｵ予約処理_通常ｽﾃ
+														SubA_PrjStgNml_NmlStgZenSaiSceYoy();
+														//[前兆再設定ﾌﾗｸﾞ]=1?
+														if (g_Base.Stg.Nml.SubANmlZenSaiSetFlg == TRUE) {
+															//YES
+															//予約ｼﾅﾘｵ抽せん_通常ｽﾃ_2回目以降
+															SubA_PrjCmn_SetSenario(D_LOT_S_NML_YOY_2, &g_Base.Stg.Nml.SubANmlSceYoy);
+
+															//抽せん名
+															result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_S_NML_YOY_2);
+
+															//[予約ｼﾅﾘｵ]←結果
+															g_Base.Stg.Nml.SubANmlSceYoyG = result;
+
+															//[通常ｼﾅﾘｵ属性]←[予約ｼﾅﾘｵ]の[ｴﾝﾌﾞﾚﾑ煽り用_ｼﾅﾘｵ属性]
+															g_Base.Stg.Nml.SubANmlSceTypeAttr = D_SNR_EN_AORI_SINA_ZOKU;
+
+															//予約ｼﾅﾘｵ決定時処理_NML共通
+															SubA_PrjStgNml_NmlComYoySceDec();
+
+															//[予約ｼﾅﾘｵG]←[予約ｼﾅﾘｵ]のｹﾞｰﾑ数
+															g_Base.Stg.Nml.SubANmlSceYoyG = g_Base.Stg.Nml.SubANmlSceYoy.GameMax;
+
+															//[ｼﾅﾘｵ開始G]←[ﾌﾞﾛｯｸ全体G]+[前兆進行G]-[予約ｼﾅﾘｵG]
+															g_Base.Stg.Nml.SubANmlSceStaG = g_Base.Stg.Nml.SubANmlBlkAllG + g_Base.Stg.Nml.SubANmlZenPrgG - g_Base.Stg.Nml.SubANmlSceYoyG;
+
+															//[ｼﾅﾘｵ開始までG]←[ｼﾅﾘｵ開始G]-[前兆進行G]
+															g_Base.Stg.Nml.SubANmlSceForStaG = g_Base.Stg.Nml.SubANmlSceStaG - g_Base.Stg.Nml.SubANmlZenPrgG;
+
+															//[前兆再設定ﾌﾗｸﾞ]←0
+															g_Base.Stg.Nml.SubANmlZenSaiSetFlg = FALSE;
+
+														}
+													}
+													else {
+														//NO
+														//前兆起点処理_通常ｽﾃ
+														SubA_PrjStgNml_NmlStgZenSta();
+
+														//
+														// 【ZEN当否ﾌﾗｸﾞ】=1 or 【次回出玉状態】= GMA/CZ?
+														if (g_Base.Stg.Mn.ZenHitFlg || g_Base.Stg.Mn.State.Next == D_DDM_STATE_GMA || g_Base.Stg.Mn.State.Next == D_DDM_STATE_CZ) {
+															//YES
+															//[本前兆ﾌﾗｸﾞ]←1
+															g_Base.Stg.Nml.SubANmlHonZenFlg = TRUE;
+
+															//[前兆全体G]←【汎用遊技数Aｶｳﾝﾀ】+1
+															g_Base.Stg.Nml.SubANmlZenAllG = g_Base.Stg.Mn.CmnA_PlayCount + 1;
+
+															//[前兆残G]←[前兆全体G]-1
+															g_Base.Stg.Nml.SubANmlZenZanG = g_Base.Stg.Nml.SubANmlZenAllG - 1;
+
+															//[前兆進行G]←1
+															g_Base.Stg.Nml.SubANmlZenPrgG = 1;
+
+														}
+														else {
+															//NO
+														}
+														//前兆種別抽せん_通常ｽﾃ
+
+
+														//結果=0?
+														if (result == 0) {
+															//YES
+														}
+														else {
+															//NO
+															//[前兆種別] ←結果
+															g_Base.Stg.Nml.SubAGmZenTyp = result;
+
+															//[ｹﾞｰﾑ数種別]=白?
+															if (g_Base.Stg.Nml.SubANmlGamNumTyp == E_SUBA_NML_GAMNUM_TYP_WHI) {
+																//NO
+																//[前兆種別]>3?
+																if (g_Base.Stg.Nml.SubANmlZenTyp > 3) {
+																	//YES
+																}
+																else {
+																	//NO 
+																	//[前兆種別]=3?
+																	if (g_Base.Stg.Nml.SubANmlZenTyp == 3) {
+																		//YES
+																	}
+																	else {
+																		//NO
+																		//アサート
+																	}
+																}
+															}
+															else {
+																//YES
+																//前兆起点役設定
+																result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_ZEN_KIT_YAK);
+
+																//[起点役]←結果
+																g_Base.Stg.Nml.SubANmlKitYak = result;
+
+																//前兆強度抽せん_通常ｽﾃ
+																result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NM_ZENCHOU_SHU);
+
+																// [前兆強度_種別]←結果
+																g_Base.Stg.Nml.SubANmlZKS_Typ = (E_SUBA_NML_ZEN_KYODO_SHUBETSU_TYP)result;
+
+																//[ﾌﾞﾛｯｸ状況]←1
+																g_Base.Stg.Nml.SubANmlBlkSts = 1;
+
+																//ｽﾃﾁｪﾝ予約抽せん
+																result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_STG_CHG_YOY);
+
+																//[ｽﾃﾁｪﾝ予約]←結果
+																g_Base.Stg.Nml.SubANmlStgChgYoy = result;
+
+																//結果=65535?(ｴﾗｰ)
+																if (result == 65535) {
+																	//YES
+																	//アサート
+																}
+																else {
+																	//NO
+																	//【ZEN当否ﾌﾗｸﾞ】=1 or 【次回出玉状態】= GMA/CZ?
+																	if (g_Base.Stg.Mn.ZenHitFlg || g_Base.Stg.Mn.State.Next == D_DDM_STATE_GMA || g_Base.Stg.Mn.State.Next == D_DDM_STATE_CZ)
+																	{
+																		//NO
+																		//前兆全体G抽せん_基本
+																		result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_ZEN_ALL_G_KHN);
+																		// [前兆全体G]←結果
+																		g_Base.Stg.Nml.SubANmlZenAllG = result;
+
+																		//結果 = 65535 ? (ｴﾗｰ)
+																		if (result == 65535) {
+																			//YES
+																			//アサート 
+																		}
+																		else {
+																			//NO
+																			//[前兆残G]←[前兆全体G]-1	
+																			g_Base.Stg.Nml.SubANmlZenZanG = g_Base.Stg.Nml.SubANmlZenAllG - 1;
+																			//[前兆進行G]←1
+																			g_Base.Stg.Nml.SubANmlZenPrgG = 1;
+																		}
+
+																	}
+																	else {
+																		//YES
+																		//ﾌﾞﾛｯｸ回数抽せん_通常ｽﾃ
+																		result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_BLK_CNT_NML_STG);
+																		// [ﾌﾞﾛｯｸ回数]←結果
+																		g_Base.Stg.Nml.SubANmlBlkNum = result;
+
+																		//[ﾌﾞﾛｯｸ回数] > [ﾌﾞﾛｯｸ状況] ?
+																		if (g_Base.Stg.Nml.SubANmlBlkNum > g_Base.Stg.Nml.SubANmlBlkSts) {
+																			//YES
+																			//ﾌﾞﾛｯｸG数抽せん_1回目_通常ｽﾃ
+																			result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_BLK_G_1_NML_STG);
+																			// [ﾌﾞﾛｯｸ全体G]←結果
+																			g_Base.Stg.Nml.SubANmlBlkAllG = result;
+
+																		}
+																		else {
+																			//NO
+																			//[ﾌﾞﾛｯｸ全体G] ←[前兆全体G]
+																			g_Base.Stg.Nml.SubANmlBlkAllG = g_Base.Stg.Nml.SubANmlZenAllG;
+
+																		}
+																		//[ﾌﾞﾛｯｸ残G]←[ﾌﾞﾛｯｸ全体G]-1
+																		g_Base.Stg.Nml.SubANmlBlkZanG = g_Base.Stg.Nml.SubANmlBlkAllG - 1;
+
+																		//予約ｼﾅﾘｵ抽せん_通常ｽﾃ_1回目
+																		//[予約ｼﾅﾘｵ]←結果
+																		SubA_PrjCmn_SetSenario(D_LOT_S_NML_YOY_1, &g_Base.Stg.Nml.SubANmlSceYoy);
+
+																		//[通常ｼﾅﾘｵ属性]←[予約ｼﾅﾘｵ]の[ｴﾝﾌﾞﾚﾑ煽り用_ｼﾅﾘｵ属性]
+																		g_Base.Stg.Nml.SubANmlSceTypeAttr = D_SNR_EN_AORI_SINA_ZOKU;
+
+																		//予約ｼﾅﾘｵ決定時処理_NML共通
+																		SubA_PrjStgNml_NmlComYoySceDec();
+
+																		//[予約ｼﾅﾘｵG]←[予約ｼﾅﾘｵ]のｹﾞｰﾑ数
+																		g_Base.Stg.Nml.SubANmlSceYoyG = g_Base.Stg.Nml.SubANmlSceYoy.GameMax;
+																		//[ｼﾅﾘｵ開始G]←[ﾌﾞﾛｯｸ全体G]+[前兆進行G]-[予約ｼﾅﾘｵG]
+																		g_Base.Stg.Nml.SubANmlBlkAllG + g_Base.Stg.Nml.SubANmlZenPrgG - g_Base.Stg.Nml.SubANmlSceYoyG;
+																		//[ｼﾅﾘｵ開始までG]←[ｼﾅﾘｵ開始G]-[前兆進行G]
+																		g_Base.Stg.Nml.SubANmlSceForStaG = g_Base.Stg.Nml.SubANmlSceStaG - g_Base.Stg.Nml.SubANmlZenPrgG;
+																		//[前兆再設定ﾌﾗｸﾞ]←0
+																		g_Base.Stg.Nml.SubANmlZenSaiSetFlg = FALSE;
+																	}
+
+																}
+
+															}
+														}
+
+
+													}
+												}
+											}
+										}
+										else {
+											//YES
+										}
+									}
+
+
+								}
+							}
+						}
+						else {
+							//NO
+
+						}
+
+
+					}
+				}
+			}
+			else {
+				//YES
+				//[前兆種別]＜3?
+				if (g_Base.Stg.Nml.SubAGmZenTyp < 3) {
+					//YES
+					//[ｽﾃﾁｪﾝ予約] ←未設定
+					g_Base.Stg.Nml.SubANmlStgChgYoy = D_LOT_O_NML_STG_CHG_YOY;
+				}
+
+
+			}
+		}
+		else {
+			//YES
+			//前兆起点処理_通常ｽﾃ
+			SubA_PrjStgNml_NmlStgZenSta();
+
+			//【ZEN当否ﾌﾗｸﾞ】=1 or 【次回出玉状態】= GMA/CZ?
+			if (g_Base.Stg.Mn.ZenHitFlg ||
+				g_Base.Stg.Mn.State.Next == D_DDM_STATE_GMA ||
+				g_Base.Stg.Mn.State.Next == D_DDM_STATE_CZ)
+			{
+				//YES
+				//[本前兆ﾌﾗｸﾞ]←1
+				g_Base.Stg.Nml.SubANmlHonZenFlg = TRUE;
+				//[前兆全体G]←【汎用遊技数Aｶｳﾝﾀ】+1
+				g_Base.Stg.Nml.SubANmlZenAllG = g_Base.Stg.Mn.CmnA_PlayCount + 1;
+				//[前兆残G]←[前兆全体G]-1
+				g_Base.Stg.Nml.SubANmlZenZanG = g_Base.Stg.Nml.SubANmlZenAllG - 1;
+				//[前兆進行G]←1
+				g_Base.Stg.Nml.SubANmlZenPrgG = 1;
+			}
+			else {
+				//NO
+				//結果 = 0 ?
+				if (result == 0) {
+					//YES
+				}
+				else {
+					//NO
+					//[前兆種別]←結果
+					g_Base.Stg.Nml.SubANmlZenTyp = (E_SUBA_NML_ZEN_TYP)result;
+
+					//[ｹﾞｰﾑ数種別]=白?
+					if (g_Base.Stg.Nml.SubANmlGamNumTyp == E_SUBA_NML_GAMNUM_TYP_WHI) {
+						//NO
+						//[前兆種別]>3?
+						if (g_Base.Stg.Nml.SubANmlZenTyp > 3) {
+							//YES
+							//[色変化中前兆ﾌﾗｸﾞ]←1
+							g_Base.Stg.Nml.SubANmlUiColChgZenFlg = 1;
+						}
+						else {
+							//NO
+							//[前兆種別]=3?
+							if (g_Base.Stg.Nml.SubANmlZenTyp == 3) {
+								//NO
+								//アサート
+							}
+							else {
+								//YES
+							}
+
+						}
+
+					}
+					else {
+						//YES
+						//前兆起点役設定
+						result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_ZEN_KIT_YAK);
+						// [起点役]←結果
+						g_Base.Stg.Nml.SubANmlKitYak = result;
+
+						//前兆強度抽せん_通常ｽﾃ
+						result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NM_ZENCHOU_SHU);
+						// [前兆強度_種別]←結果
+						g_Base.Stg.Nml.SubANmlZKS_Typ = (E_SUBA_NML_ZEN_KYODO_SHUBETSU_TYP)result;
+
+						//[ﾌﾞﾛｯｸ状況]←1
+						g_Base.Stg.Nml.SubANmlBlkSts = 1;
+
+						//ｽﾃﾁｪﾝ予約抽せん
+						result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_STG_CHG_YOY);
+						// [ｽﾃﾁｪﾝ予約]←結果
+						g_Base.Stg.Nml.SubANmlStgChgYoy = (E_SUBA_NML_STG)result;
+
+						//結果=65535?(ｴﾗｰ)
+						if (result == 65535) {
+							//YES
+							//アサート
+						}
+						else {
+							//NO
+							//【ZEN当否ﾌﾗｸﾞ】=1 or 【次回出玉状態】= GMA/CZ?
+							if (g_Base.Stg.Mn.ZenHitFlg || g_Base.Stg.Mn.State.Next == D_DDM_STATE_GMA || g_Base.Stg.Mn.State.Next == D_DDM_STATE_CZ) {
+								//NO
+								//前兆全体G抽せん_基本
+								result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_ZEN_ALL_G_KHN);
+								// [前兆全体G]←結果
+								g_Base.Stg.Nml.SubANmlZenAllG = result;
+
+								//結果=65535?(ｴﾗｰ)
+								if (result == 65535) {
+									//YES
+									//アサート
+								}
+								else {
+									//NO
+									//[前兆残G]←[前兆全体G]-1	
+									g_Base.Stg.Nml.SubANmlZenZanG = g_Base.Stg.Nml.SubANmlZenAllG - 1;
+									//[前兆進行G]←1
+									g_Base.Stg.Nml.SubANmlZenPrgG = 1;
+
+									//[ﾌﾞﾛｯｸ回数]>[ﾌﾞﾛｯｸ状況]?
+									if (g_Base.Stg.Nml.SubANmlBlkNum > g_Base.Stg.Nml.SubANmlBlkSts) {
+										//NO
+										//[ﾌﾞﾛｯｸ全体G]←[前兆全体G]
+										g_Base.Stg.Nml.SubANmlBlkAllG = g_Base.Stg.Nml.SubANmlZenAllG;
+									}
+									else {
+										//YES
+										//ﾌﾞﾛｯｸG数抽せん_1回目_通常ｽﾃ
+										result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_BLK_G_1_NML_STG);
+										// [ﾌﾞﾛｯｸ全体G]←結果
+										g_Base.Stg.Nml.SubANmlBlkAllG = result;
+
+										//[ﾌﾞﾛｯｸ残G]←[ﾌﾞﾛｯｸ全体G]-1
+										g_Base.Stg.Nml.SubANmlBlkZanG = g_Base.Stg.Nml.SubANmlBlkAllG - 1;
+
+										//予約ｼﾅﾘｵ抽せん_通常ｽﾃ_1回目
+										//[予約ｼﾅﾘｵ]←結果
+										SubA_PrjCmn_SetSenario(D_LOT_S_NML_YOY_1, &g_Base.Stg.Nml.SubANmlSceYoy);
+
+										//[通常ｼﾅﾘｵ属性]←[予約ｼﾅﾘｵ]の[ｴﾝﾌﾞﾚﾑ煽り用_ｼﾅﾘｵ属性]
+										g_Base.Stg.Nml.SubANmlSceTypeAttr = D_SNR_EN_AORI_SINA_ZOKU;
+
+										//予約ｼﾅﾘｵ決定時処理_NML共通
+										SubA_PrjStgNml_NmlComYoySceDec();
+
+										//[予約ｼﾅﾘｵG] ←[予約ｼﾅﾘｵ]のｹﾞｰﾑ数
+										g_Base.Stg.Nml.SubANmlSceYoyG = g_Base.Stg.Nml.SubANmlSceYoyG;
+										//[ｼﾅﾘｵ開始G]←[ﾌﾞﾛｯｸ全体G]+[前兆進行G]-[予約ｼﾅﾘｵG]
+										g_Base.Stg.Nml.SubANmlSceStaG = g_Base.Stg.Nml.SubANmlBlkAllG + g_Base.Stg.Nml.SubANmlZenPrgG - g_Base.Stg.Nml.SubANmlSceYoyG;
+										//[ｼﾅﾘｵ開始までG]←[ｼﾅﾘｵ開始G]-[前兆進行G]
+										g_Base.Stg.Nml.SubANmlSceForStaG = g_Base.Stg.Nml.SubANmlSceStaG - g_Base.Stg.Nml.SubANmlZenPrgG;
+										//[前兆再設定ﾌﾗｸﾞ]←0
+										g_Base.Stg.Nml.SubANmlZenSaiSetFlg = 0;
+									}
+
+								}
+							}
+						}
+					}
+				}
+			}
+			//[裏前兆全体G]>0?
+			if (g_Base.Stg.Nml.SubANmlUraZenAllG > 0) {
+				//NO
+			}
+			else {
+				//YES
+				//[前兆種別]<3?
+				if (g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp < 3) {
+					//NO
+				}
+				else {
+					//YES
+					//裏前兆開始処理 
+					SubA_PrjStgNml_NmlStgUraZenSta();
+
+					//[前兆全体G]←[裏前兆全体G]
+					g_Base.Stg.Nml.SubANmlZenAllG = g_Base.Stg.Nml.SubANmlUraZenAllG;
+
+					//[前兆残G]←[裏前兆残G]
+					g_Base.Stg.Nml.SubANmlZenZanG = g_Base.Stg.Nml.SubANmlUraZenZanG;
+
+					//[前兆進行G]←[裏前兆進行G]
+					g_Base.Stg.Nml.SubANmlZenPrgG = g_Base.Stg.Nml.SubANmlUraZenPrgG;
+
+					//前兆種別抽せん_裏前兆
+					SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_ZEN_TYP_URA_STG);
+					//結果=0?
+					if (result == 0) {
+						//YES
+						//[前兆全体G]←0
+						g_Base.Stg.Nml.SubANmlZenAllG = 0;
+						//[前兆残G]←0
+						g_Base.Stg.Nml.SubANmlZenZanG = 0;
+						//[前兆進行G]←0
+						g_Base.Stg.Nml.SubANmlZenPrgG = 0;
+					}
+					else {
+						//NO
+						//[前兆種別]←結果
+						g_Base.Stg.Nml.SubANmlZenTyp = (E_SUBA_NML_ZEN_TYP)result;
+						//[ﾌﾞﾛｯｸ状況]←1
+						g_Base.Stg.Nml.SubANmlBlkSts = 1;
+						//[起点役]←[裏起点役]
+						g_Base.Stg.Nml.SubANmlKitYak = g_Base.Stg.Nml.SubANmlUraKitYak;
+
+						//前兆強度抽せん_通常ｽﾃ
+						result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NM_ZENCHOU_SHU);
+						//[前兆強度_種別] ←結果
+						g_Base.Stg.Nml.SubANmlZKS_Typ = result;
+
+						//ｽﾃﾁｪﾝ予約抽せん
+						result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_STG_CHG_YOY);
+						//[ｽﾃﾁｪﾝ予約] ←結果
+						g_Base.Stg.Nml.SubANmlStgChgYoy = result;
+
+						//結果=65535?(ｴﾗｰ)
+						if (result == 65535) {
+							//YES
+								//アサート
+						}
+						else {
+							//NO
+							//【当該出玉状態】=ZEN or 【次回出玉状態】= GMA/CZ?
+							if (g_Base.Stg.Mn.State.Now == D_DDM_STATE_ZEN || g_Base.Stg.Mn.State.Next == D_DDM_STATE_GMA || g_Base.Stg.Mn.State.Next == D_DDM_STATE_CZ) {
+								//YES
+									//アサート
+							}
+							else {
+								//NO
+								//ﾌﾞﾛｯｸ回数抽せん_通常ｽﾃ
+								result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_BLK_CNT_NML_STG);
+								//[ﾌﾞﾛｯｸ回数]←結果
+								g_Base.Stg.Nml.SubANmlBlkNum = result;
+
+								//[ﾌﾞﾛｯｸ回数]>[ﾌﾞﾛｯｸ状況]?
+								if (g_Base.Stg.Nml.SubANmlBlkNum > (u32)g_Base.Stg.Nml.SubANmlBlkSts) {
+									//NO
+									//[ﾌﾞﾛｯｸ全体G]←[前兆残G]+1
+									g_Base.Stg.Nml.SubANmlBlkAllG = g_Base.Stg.Nml.SubANmlZenZanG + 1;
+
+								}
+								else {
+									//YES
+									//ﾌﾞﾛｯｸG数抽せん_1回目_通常ｽﾃ
+									result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_BLK_G_1_NML_STG);
+									// [ﾌﾞﾛｯｸ全体G]←結果
+									g_Base.Stg.Nml.SubANmlBlkAllG = result;
+
+									//[ﾌﾞﾛｯｸ残G]←[ﾌﾞﾛｯｸ全体G]-1
+									g_Base.Stg.Nml.SubANmlBlkZanG = g_Base.Stg.Nml.SubANmlBlkAllG - 1;
+
+									//予約ｼﾅﾘｵ抽せん_通常ｽﾃ_1回目
+									//[予約ｼﾅﾘｵ]←結果
+									SubA_PrjCmn_SetSenario(D_LOT_S_NML_YOY_1, &g_Base.Stg.Nml.SubANmlSceYoy);
+
+									//[通常ｼﾅﾘｵ属性]←[予約ｼﾅﾘｵ]の[ｴﾝﾌﾞﾚﾑ煽り用_ｼﾅﾘｵ属性]
+									g_Base.Stg.Nml.SubANmlSceTypeAttr = D_SNR_EN_AORI_SINA_ZOKU;
+
+									//予約ｼﾅﾘｵ決定時処理_NML共通
+									SubA_PrjStgNml_NmlComYoySceDec();
+
+									//[予約ｼﾅﾘｵG]←[予約ｼﾅﾘｵ]のｹﾞｰﾑ数
+									g_Base.Stg.Nml.SubANmlSceYoyG = g_Base.Stg.Nml.SubANmlSceYoy.GameMax;
+
+									//[ｼﾅﾘｵ開始G]←[ﾌﾞﾛｯｸ全体G]+[前兆進行G]-[予約ｼﾅﾘｵG]
+									g_Base.Stg.Nml.SubANmlSceStaG = g_Base.Stg.Nml.SubANmlBlkAllG + g_Base.Stg.Nml.SubANmlZenPrgG - g_Base.Stg.Nml.SubANmlSceYoyG;
+									//[ｼﾅﾘｵ開始までG]←[ｼﾅﾘｵ開始G]-[前兆進行G]
+									g_Base.Stg.Nml.SubANmlSceForStaG = g_Base.Stg.Nml.SubANmlSceStaG - g_Base.Stg.Nml.SubANmlZenPrgG;
+									//[前兆再設定ﾌﾗｸﾞ]←0
+									g_Base.Stg.Nml.SubANmlZenSaiSetFlg = 0;
+								}
+							}
+						}
+
+					}
+
+				}
+				//[裏前兆全体G]←0
+				g_Base.Stg.Nml.SubANmlUraZenAllG = 0;
+
+				//[裏前兆進行G]←0
+				g_Base.Stg.Nml.SubANmlUraZenPrgG = 0;
+
+				//[裏前兆残G]←0
+				g_Base.Stg.Nml.SubANmlUraZenZanG = 0;
+
+			}
+		}
+
