@@ -1,0 +1,349 @@
+//[ｽﾃｰｼﾞ] = 未設定 ?
+if (g_Base.Stg.Nml.SubANmlStgNow == E_SUBA_NML_STG_NON) {
+	//YES
+	//ｽﾃｰｼﾞ未設定時処理
+	SubA_PrjStgNml_StgNon();
+
+	//[ｽﾃｰｼﾞ]←街ｽﾃｰｼﾞ
+	g_Base.Stg.Nml.SubANmlStgNow = E_SUBA_NML_STG_MAT;
+
+	//ｽﾃﾁｪﾝ制限初回G抽せん
+	result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_STG_CHG_1ST);
+
+	//[次ｽﾃｰｼﾞ]←[ｽﾃｰｼﾞ]
+	g_Base.Stg.Nml.SubANmlStgNex = g_Base.Stg.Nml.SubANmlStgNow;
+}
+else { //NO không làm gì
+}
+
+//NML共通_事前処理
+SubA_PrjStgNml_ComPre();
+
+
+//[ｽﾃｰｼﾞ]≠[次ｽﾃｰｼﾞ]?
+if (g_Base.Stg.Nml.SubANmlStgNow != g_Base.Stg.Nml.SubANmlStgNex) {
+	//YES
+	//[ｽﾃｰｼﾞ]←[次ｽﾃｰｼﾞ]
+	g_Base.Stg.Nml.SubANmlStgNow = g_Base.Stg.Nml.SubANmlStgNex;
+
+	//[ｽﾃｰｼﾞ滞在G]←1
+	g_Base.Stg.Nml.SubANmlStgStyG = 1;
+
+	//[ｽﾃﾁｪﾝ予約]←0
+	g_Base.Stg.Nml.SubANmlStgStyG = FALSE;
+
+	//[ｽﾃｰｼﾞ]=未設定?
+	if (g_Base.Stg.Nml.SubANmlStgNow = E_SUBA_NML_STG_NON) {
+		//NO
+		//ｽﾃﾁｪﾝ制限G抽せん
+		result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NML_STG_CHG_YOY);
+
+		//[ｽﾃﾁｪﾝ制限G]←結果
+		g_Base.Stg.Nml.SubANmlStgChgLimG = result;
+	}
+	else {
+		//YES 
+	}
+} else {
+	//NO
+}
+
+//[ｽﾃｰｼﾞ滞在G]+1
+g_Base.Stg.Nml.SubANmlStgStyG++;
+
+//[ｽﾃﾁｪﾝ制限G]>0?
+if (g_Base.Stg.Nml.SubANmlStgChgLimG > 0) {
+	//YES
+	//[ｽﾃﾁｪﾝ制限G]-1
+	g_Base.Stg.Nml.SubANmlStgChgLimG--;
+  } else {
+	//NO
+}
+
+//[前兆進行G] > 0 ?
+if (g_Base.Stg.Nml.SubANmlZenPrgG > 0) {
+	//YES
+	//[前兆進行G] + 1
+	g_Base.Stg.Nml.SubANmlZenPrgG++;
+}
+else
+{
+	//NO
+}
+
+//[ﾌﾞﾛｯｸ残G] > 0 ?
+if (g_Base.Stg.Nml.SubANmlBlkAllG > 0) {
+	//YES
+	//[ﾌﾞﾛｯｸ残G] - 1
+	g_Base.Stg.Nml.SubANmlBlkAllG--;
+}
+else {
+	//NO
+}
+
+//[ｼﾅﾘｵ開始までG] > 0 ?
+if (g_Base.Stg.Nml.SubANmlSceForStaG > 0) {
+	//YES
+	//[ｼﾅﾘｵ開始までG] - 1
+	g_Base.Stg.Nml.SubANmlSceForStaG--;
+}
+else {
+	//NO
+}
+
+//[前兆残G]>0?
+if (g_Base.Stg.Nml.SubANmlZenZanG > 0) {
+	//YES
+	//[前兆残G] - 1
+	g_Base.Stg.Nml.SubANmlZenZanG--;
+}
+else {
+	//NO
+}
+
+//[ｱｲﾃﾑ転送制限ｶｳﾝﾀ]>0?
+if (g_Base.Stg.Nml.SubANmlItmTraLim > 0) {
+	//YES
+	//[ｱｲﾃﾑ転送制限ｶｳﾝﾀ] - 1
+	g_Base.Stg.Nml.SubANmlItmTraLim--;
+}
+else {
+	//NO
+}
+
+//[裏前兆残G]>0?
+if (g_Base.Stg.Nml.SubANmlUraZenZanG > 0) {
+	//YES
+	//[裏前兆残G] - 1
+	g_Base.Stg.Nml.SubANmlUraZenZanG--;
+}
+else {
+	//NO
+}
+
+//[裏前兆進行G]>0?
+if (g_Base.Stg.Nml.SubANmlUraZenPrgG > 0) {
+	//YES
+	//[裏前兆進行G] + 1
+	g_Base.Stg.Nml.SubANmlUraZenPrgG++;
+}
+else {
+	//NO
+}
+
+//[ｹﾞｰﾑ数保証G]>0?
+if (g_Base.Stg.Nml.SubANmlGamSecG > 0) {
+	//YES
+	//[ｹﾞｰﾑ数保証G] - 1
+	g_Base.Stg.Nml.SubANmlGamSecG--;
+}
+else {
+	//NO
+}
+
+//[ﾏｶ高確保証G]>0?
+if (g_Base.Stg.Nml.SubANmlMakSecG > 0) {
+	//YES
+	//[ﾏｶ高確保証G] - 1
+	g_Base.Stg.Nml.SubANmlMakSecG--;
+}
+else {
+	//NO
+}
+
+//[NM副禁止G]>0?
+if (g_Base.Stg.Nml.SubANmlNMFukuKinshiG > 0) {
+	//YES
+	//[NM副禁止G] - 1
+	g_Base.Stg.Nml.SubANmlNMFukuKinshiG--;
+}
+else {
+	//NO
+}
+
+//[SU文言制限ｶｳﾝﾀ]>0?
+if (g_Base.Stg.Nml.SubANmlSUBungenSeigenKauntaa > 0) {
+	//YES
+	//[SU文言制限ｶｳﾝﾀ] - 1
+	g_Base.Stg.Nml.SubANmlSUBungenSeigenKauntaa--;
+}
+else {
+	//NO
+}
+
+//[激熱非発生ｶｳﾝﾀ]>0?
+if (g_Base.Stg.Nml.SubANmlGekiHiCnt > 0) {
+	//YES
+	//[激熱非発生ｶｳﾝﾀ] - 1
+	g_Base.Stg.Nml.SubANmlGekiHiCnt--;
+}
+else {
+	//NO
+}
+
+
+//[特定ﾀｲﾐﾝｸﾞ内部示唆ｶｳﾝﾀ]>0?
+if (g_Base.Stg.Nml.SubANmlTimingHintCnt > 0) {
+	//YES
+	//[特定ﾀｲﾐﾝｸﾞ内部示唆ｶｳﾝﾀ] - 1
+	g_Base.Stg.Nml.SubANmlTimingHintCnt--;
+}
+else {
+	//NO
+}
+
+//[共通_通常時表示G]<111?
+if (g_Base.Cmn.NmlCounter < 111) {
+	//NO 
+	//[前兆種別]≧1?
+	if (g_Base.Stg.Nml.SubAGmZenTyp >= 1) {
+		//NO
+		//[ｽﾃｰｼﾞ]=5or6?
+		if (5 == g_Base.Stg.Nml.SubANmlStgNow ||
+			6 == g_Base.Stg.Nml.SubANmlStgNow) {
+			//NO
+			//[ｹﾞｰﾑ数種別]←白 
+			g_Base.Stg.Nml.SubANmlGamNumTyp_Old == E_SUBA_NML_GAMNUM_TYP_WHI;
+		}
+		else {
+			//YES
+			//[変化抽せん済ﾌﾗｸﾞ] = 0 ?
+			if (g_Base.Stg.Nml.SubANmlChgLotFlg == FALSE) {
+				//YES
+				//[共通_通常時表示G]=111～124?
+				if (g_Base.Cmn.NmlCounter >= D_SUBA_NML_GAM_EDG_NUM_111 && g_Base.Cmn.NmlCounter <= D_SUBA_NML_GAM_EDG_NUM_124) {
+					//NO
+					//[共通_通常時表示G]=222～235?
+					if (g_Base.Cmn.NmlCounter >= D_SUBA_NML_GAM_EDG_NUM_222 && g_Base.Cmn.NmlCounter <= D_SUBA_NML_GAM_EDG_NUM_235) {
+						//NO
+						//[共通_通常時表示G]=333～346?
+						if (g_Base.Cmn.NmlCounter >= D_SUBA_NML_GAM_EDG_NUM_333 && g_Base.Cmn.NmlCounter <= D_SUBA_NML_GAM_EDG_NUM_346) {
+							//NO
+							//[共通_通常時表示G]=444～457?
+							if (g_Base.Cmn.NmlCounter >= D_SUBA_NML_GAM_EDG_NUM_444 && g_Base.Cmn.NmlCounter <= D_SUBA_NML_GAM_EDG_NUM_457) {
+								//NO
+								//[共通_通常時表示G]=555～568?
+								if (g_Base.Cmn.NmlCounter >= D_SUBA_NML_GAM_EDG_NUM_555 && g_Base.Cmn.NmlCounter <= D_SUBA_NML_GAM_EDG_NUM_568) {
+									//NO
+									//[共通_通常時表示G]=777～790?
+									if (g_Base.Cmn.NmlCounter >= D_SUBA_NML_GAM_EDG_NUM_777 && g_Base.Cmn.NmlCounter <= D_SUBA_NML_GAM_EDG_NUM_790) {
+										//NO
+										//[共通_通常時表示G]≧999
+										if (g_Base.Cmn.NmlCounter >= D_SUBA_NML_GAM_EDG_NUM_999) {
+											//NO
+										}
+
+									}
+								}
+							}
+						}
+					}
+
+				}
+				else {
+					//YES
+					//[ｹﾞｰﾑ数種別]=白?
+					if (g_Base.Stg.Nml.SubANmlGamNumTyp == E_SUBA_NML_GAMNUM_TYP_WHI) {
+						//NO
+					}
+					else {
+						//YES
+						//[変化抽せん済ﾌﾗｸﾞ]←1
+						g_Base.Stg.Nml.SubANmlChgLotFlg = TRUE;
+
+						//G数ｶｳﾝﾀ色抽せん
+						u32 SubA_PrjStgNml_LotGNum(u32 type);
+						SubA_PrjStgNml_LotGNum(D_LOT_O_NML_G_CNT_COL_111);
+						SubA_PrjStgNml_LotGNum(D_LOT_O_NML_G_CNT_COL_222);
+						SubA_PrjStgNml_LotGNum(D_LOT_O_NML_G_CNT_COL_333);
+						SubA_PrjStgNml_LotGNum(D_LOT_O_NML_G_CNT_COL_444);
+						SubA_PrjStgNml_LotGNum(D_LOT_O_NML_G_CNT_COL_555);
+						SubA_PrjStgNml_LotGNum(D_LOT_O_NML_G_CNT_COL_777);
+						SubA_PrjStgNml_LotGNum(D_LOT_O_NML_G_CNT_COL_999);
+
+
+						//結果=0?
+						if (result == 0) {
+							//NO
+							//[ｹﾞｰﾑ数種別]=結果
+							g_Base.Stg.Nml.SubANmlGamNumTyp = result;
+
+							//[UI色変化G数]←[共通_通常時表示G]
+							g_Base.Stg.Nml.SubANmlUiChgNum = g_Base.Cmn.NmlCounter;
+
+							//[ｱｲﾃﾑ転送_ﾓｰﾄﾞ示唆ﾌﾗｸﾞ] ←0
+							g_Base.Stg.Nml.SubANmlItmTraSSAFlg = FALSE;
+
+							//[特定ﾀｲﾐﾝｸﾞ内部示唆ｶｳﾝﾀ]←50
+							g_Base.Stg.Nml.SubANmlTimingHintCnt = 50;
+
+
+
+						}
+						else {
+							//YES 
+						}
+
+					}
+
+
+
+
+
+				}
+			}
+		}
+	}
+}
+else {
+	//YES
+}
+
+//[ｹﾞｰﾑ数種別]←白
+g_Base.Stg.Nml.SubANmlGamNumTyp == E_SUBA_NML_GAMNUM_TYP_WHI;
+
+//[変化抽せん済ﾌﾗｸﾞ]←0
+g_Base.Stg.Nml.SubANmlChgLotFlg = FALSE;
+
+//[色変化中前兆ﾌﾗｸﾞ]←0
+g_Base.Stg.Nml.SubANmlUiColChgZenFlg = FALSE;
+
+
+
+
+//[ｹﾞｰﾑ数種別]=白?
+if (g_Base.Stg.Nml.SubANmlGamNumTyp = E_SUBA_NML_GAMNUM_TYP_WHI) {
+	//YES
+	//[UI色変化G数] ←0
+	g_Base.Stg.Nml.SubANmlUiChgNum = 0;
+}
+else {
+	//NO
+}
+
+//[ｱｲﾃﾑ転送_使用ﾌﾗｸﾞ]←0
+g_Base.Stg.Nml.SubANmlItmTraUseFlg = FALSE;
+
+//[前兆示唆種別]=1?
+if (g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp == TRUE) {
+	//YES
+	//[前兆示唆種別]←2
+	g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp = 2;
+
+}
+else {
+	//NO
+}
+//[前兆示唆種別]=3? 
+if (g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp == 3) {
+	//YES
+	//[前兆示唆種別]←0
+	g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp = FALSE;
+
+	//[前兆示唆色]←0
+	g_Base.Stg.Nml.SubANmlZenchouShisaIroTyp = FALSE;
+
+}
+else {
+	//NO
+}
