@@ -1060,4 +1060,759 @@ else {
 
 			}
 		}
+//-------------------------------------------------
+//ｽﾃｰｼﾞ管理処理
+//-------------------------------------------------
+SubA_PrjStgNml_StgMan();
 
+//[前兆種別] = 未設定 ?
+if (g_Base.Stg.Nml.SubANmlZenTyp = E_SUBA_NML_ZEN_TYP_NON) {
+	//NO
+
+}
+else {
+	//YES
+	//[ｽﾃﾁｪﾝ制限G]=0且つ[ﾀｲﾄﾙ表示ﾌﾗｸﾞ]=0?
+	if (g_Base.Stg.Nml.SubANmlStgChgLimG == 0 && g_Base.Stg.Nml.SubANmlTitDipFlg == 0) {
+		//NO
+	}
+	else {
+		//YES
+		//ｽﾃｰｼﾞ移行許可抽せん
+		SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_BKZ_STAGE_CHANGE_PERMIT);
+
+		//結果=0?
+		if (result == 0) {
+			//YES
+		}
+		else {
+			//NO
+			//ｽﾃｰｼﾞ移行抽せん
+			result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_GMA_STG_IKO);
+
+			//結果=0?
+			if (result == 0) {
+				//YES
+			}
+			else {
+				//NO
+				//[ｽﾃﾁｪﾝ予約]←結果
+				g_Base.Stg.Nml.SubANmlStgChgYoy = (E_SUBA_NML_STG)result;
+
+				//[UI色変化G数]=111～124?
+				if (g_Base.Stg.Nml.SubANmlUiChgNum >= 111 && g_Base.Stg.Nml.SubANmlUiChgNum <= 124) {
+					//YES
+				}
+				else {
+					//NO
+					//[UI色変化G数]=222～235?
+					if (g_Base.Stg.Nml.SubANmlUiChgNum >= 222 && g_Base.Stg.Nml.SubANmlUiChgNum <= 235) {
+						//YES
+					}
+					else {
+						//NO
+						//[UI色変化G数]=333～346?
+						if (g_Base.Stg.Nml.SubANmlUiChgNum >= 333 && g_Base.Stg.Nml.SubANmlUiChgNum <= 346) {
+							//YES
+						}
+						else {
+							//NO
+							//[UI色変化G数] = 444～457 ?
+							if (g_Base.Stg.Nml.SubANmlUiChgNum >= 444 && g_Base.Stg.Nml.SubANmlUiChgNum <= 457) {
+								//YES
+							}
+							else {
+								//NO
+								//[UI色変化G数]=555～568?
+								if (g_Base.Stg.Nml.SubANmlUiChgNum >= 555 && g_Base.Stg.Nml.SubANmlUiChgNum <= 568) {
+									//YES
+								}
+								else {
+									//NO
+									//[UI色変化G数]=777～790?
+									if (g_Base.Stg.Nml.SubANmlUiChgNum >= 555 && g_Base.Stg.Nml.SubANmlUiChgNum <= 568) {
+										//NO
+									}
+									else {
+										//YES
+										//[共通_通常時表示G]-[UI色変化G数]>10?
+										if (g_Base.Cmn.NmlCounter - g_Base.Stg.Nml.SubANmlUiChgNum > 10) {
+											//NO
+										}
+										else {
+											//YES
+											//[ｹﾞｰﾑ数種別]←白
+											g_Base.Stg.Nml.SubANmlGamNumTyp_Old == E_SUBA_NML_GAMNUM_TYP_WHI;
+
+											//[前兆種別]≧1?
+											if (g_Base.Stg.Nml.SubANmlZenTyp >= 1) {
+												//YES
+											}
+											else {
+												//NO
+												//[ｽﾃｰｼﾞ]=5or6?
+												if (5 == g_Base.Stg.Nml.SubANmlStgNow ||
+													6 == g_Base.Stg.Nml.SubANmlStgNow) {
+													//YES
+												}
+												else {
+													//NO
+													//[ｹﾞｰﾑ数種別]←白
+													g_Base.Stg.Nml.SubANmlGamNumTyp == E_SUBA_NML_GAMNUM_TYP_WHI;
+
+
+													//前遊技_【当該出玉状態】=GMB/CZ?
+													if (g_Base.Stg.Mn.State.Old == D_DDM_STATE_CZ ||
+														g_Base.Stg.Mn.State.Old == D_DDM_STATE_GMB) {
+														//NO
+														//[共通_通常時表示G] = 0～99 ?
+														if (g_Base.Cmn.NmlCounter >= 0 && g_Base.Cmn.NmlCounter <= 99) {
+															//NO
+															//[共通_通常時表示G]=100～199?
+															if (g_Base.Cmn.NmlCounter >= 100 && g_Base.Cmn.NmlCounter <= 199) {
+																//YES
+																//[BIG示唆ｹﾞｰﾑ数種別]=2?
+																if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp = 2) {
+																	//YES
+																	//[BIG示唆ﾌﾗｸﾞ] ←1
+																	g_Base.Stg.Nml.SubANmlBIGShisaFlg = TRUE;
+																}
+																else {
+																	//NO
+																}
+															}
+															else {
+																//NO
+																//[共通_通常時表示G]=200～299?
+																if (g_Base.Cmn.NmlCounter >= 200 && g_Base.Cmn.NmlCounter <= 299) {
+																	//YES
+																	//[BIG示唆ｹﾞｰﾑ数種別] = 4 ?
+																	if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 4) {
+																		//YES
+																		//[BIG示唆ﾌﾗｸﾞ] ←1
+																		g_Base.Stg.Nml.SubANmlBIGShisaFlg == TRUE;
+																	}
+																}
+																else {
+																	//NO
+																	//[共通_通常時表示G]=300～399?
+																	if (g_Base.Cmn.NmlCounter >= 300 && g_Base.Cmn.NmlCounter <= 399) {
+																		//YES
+																		//[BIG示唆ｹﾞｰﾑ数種別] = 6 ?
+																		if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 6) {
+																			//YES
+																			//[BIG示唆ﾌﾗｸﾞ] ←1
+																			g_Base.Stg.Nml.SubANmlBIGShisaFlg == TRUE;
+																		}
+																	}
+																	else {
+																		//NO
+																		//[共通_通常時表示G]=400～499?
+																		if (g_Base.Cmn.NmlCounter >= 400 && g_Base.Cmn.NmlCounter <= 499) {
+																			//YES
+																			//[BIG示唆ｹﾞｰﾑ数種別] = 8 ?
+																			if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 8) {
+																				//YES
+																				//[BIG示唆ﾌﾗｸﾞ] ←1
+																				g_Base.Stg.Nml.SubANmlBIGShisaFlg == TRUE;
+																			}
+																		}
+																		else {
+																			//NO
+																			//[共通_通常時表示G]=500～599?
+																			if (g_Base.Cmn.NmlCounter >= 500 && g_Base.Cmn.NmlCounter <= 599) {
+																				//YES
+																				//[BIG示唆ｹﾞｰﾑ数種別] = 10 ?
+																				if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp = 10) {
+																					//YES
+																					//[BIG示唆ﾌﾗｸﾞ] ←1
+																					g_Base.Stg.Nml.SubANmlBIGShisaFlg == TRUE;
+																				}
+																			}
+																			else {
+																				//NO
+																				//[共通_通常時表示G]=600～699?
+																				if (g_Base.Cmn.NmlCounter >= 600 && g_Base.Cmn.NmlCounter <= 699) {
+																					//YES
+																					//[BIG示唆ｹﾞｰﾑ数種別]=12?
+																					if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 12) {
+																						//YES
+																						//[BIG示唆ﾌﾗｸﾞ] ←1
+																						g_Base.Stg.Nml.SubANmlBIGShisaFlg == TRUE;
+																					}
+																					else {
+																						//NO
+																					}
+																				}
+																				else {
+																					//NO
+																					//[共通_通常時表示G]=700～799?
+																					if (g_Base.Cmn.NmlCounter >= 700 && g_Base.Cmn.NmlCounter <= 799) {
+																						//YES
+																						//[BIG示唆ｹﾞｰﾑ数種別] = 14 ?
+																						if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 14) {
+																							//YES
+																							//[BIG示唆ﾌﾗｸﾞ] ←1
+																							g_Base.Stg.Nml.SubANmlBIGShisaFlg == TRUE;
+																						}
+																						else {
+																							//NO 
+																						}
+																					}
+																					else {
+																						//NO
+																						//[共通_通常時表示G] = 800～899 ?
+																						if (g_Base.Cmn.NmlCounter >= 800 && g_Base.Cmn.NmlCounter <= 899) {
+																							//YES
+																							//[BIG示唆ｹﾞｰﾑ数種別] = 16 ?
+																							if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 16) {
+																								//YES
+																								//[BIG示唆ﾌﾗｸﾞ] ←1
+																								g_Base.Stg.Nml.SubANmlBIGShisaFlg == TRUE;
+																							}
+																							else {
+																								//NO
+																							}
+																						}
+
+																					}
+																				}
+																			}
+																		}
+																	}
+																}
+															}
+														}
+														else {
+															//YES
+															//[BIG示唆ｹﾞｰﾑ数種別]=1?
+															if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp = TRUE) {
+																//YES
+																//[BIG示唆ﾌﾗｸﾞ] ←1
+																g_Base.Stg.Nml.SubANmlBIGShisaFlg == 1;
+															}
+															else {
+																//NO
+															}
+
+														}
+
+
+													}
+													else {
+														//YES
+														//前遊技_[ｹﾞｰﾑ数種別]≧1?
+														if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 1) {
+															//NO
+														}
+														else {
+															//YES
+															//[ｹﾞｰﾑ数種別]=0?
+															if (g_Base.Stg.Nml.SubANmlGamNumTyp == 0) {
+																//NO
+															}
+															else {
+																//YES
+																//[UI色変化G数]=111～124?
+																if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 111 && g_Base.Stg.Nml.SubANmlGamNumTyp <= 124) {
+																	//YES
+																	//[BIG示唆ｹﾞｰﾑ数種別]=3? 
+																	if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 3) {
+																		//NO
+																	}
+																	else {
+																		//YES
+																		//[BIG示唆前兆終了後ﾌﾗｸﾞ]←1
+																		g_Base.Stg.Nml.SubANmlBIGShisaZenchouShuuryouGoFlg = TRUE;
+																	}
+
+
+																	//NO
+																	//[UI色変化G数]=222～235?
+																	if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 222 && g_Base.Stg.Nml.SubANmlGamNumTyp <= 235) {
+																		//YES
+																		//[BIG示唆ｹﾞｰﾑ数種別]=5?
+																		if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 5) {
+																			//NO
+																		}
+																		else {
+																			//YES
+																			//[BIG示唆前兆終了後ﾌﾗｸﾞ]←1
+																			g_Base.Stg.Nml.SubANmlBIGShisaZenchouShuuryouGoFlg == TRUE;
+																		}
+
+
+																		//NO
+																		//[UI色変化G数]=333～346?
+																		if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 333 && g_Base.Stg.Nml.SubANmlGamNumTyp <= 346) {
+																			//YES
+																			//[BIG示唆ｹﾞｰﾑ数種別] = 7 ?
+																			if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 7) {
+																				//YES
+																				//[BIG示唆前兆終了後ﾌﾗｸﾞ] ←1
+																				g_Base.Stg.Nml.SubANmlBIGShisaZenchouShuuryouGoFlg == TRUE;
+																			}
+																			else {
+																				//NO
+																			}
+																		}
+																		else {
+																			//NO
+																			//[UI色変化G数]=444～457?
+																			if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 444 && g_Base.Stg.Nml.SubANmlGamNumTyp <= 457) {
+																				//YES
+																				//[BIG示唆ｹﾞｰﾑ数種別]=9?
+																				if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 9) {
+																					//YES
+																					//[BIG示唆前兆終了後ﾌﾗｸﾞ] ←1
+																					g_Base.Stg.Nml.SubANmlBIGShisaZenchouShuuryouGoFlg == TRUE;
+																				}
+																				else {
+																					//NO
+																				}
+																			}
+																			else {
+																				//NO
+																				//[UI色変化G数]=555～568?
+																				if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 555 && g_Base.Stg.Nml.SubANmlGamNumTyp <= 568) {
+																					//YES
+																					//[BIG示唆ｹﾞｰﾑ数種別]=11?
+																					if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 11) {
+																						//YES
+																						//[BIG示唆前兆終了後ﾌﾗｸﾞ] ←1
+																						g_Base.Stg.Nml.SubANmlBIGShisaZenchouShuuryouGoFlg == TRUE;
+																					}
+																					else {
+																						//NO
+																					}
+																				}
+																				else {
+																					//NO
+																					//[UI色変化G数]=777～790?
+																					if (g_Base.Stg.Nml.SubANmlGamNumTyp >= 777 && g_Base.Stg.Nml.SubANmlGamNumTyp <= 790) {
+																						//YES
+																						//[BIG示唆ｹﾞｰﾑ数種別]=14?
+																						if (g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == 14) {
+																							//YES
+																							//[BIG示唆前兆終了後ﾌﾗｸﾞ]←1
+																							g_Base.Stg.Nml.SubANmlBIGShisaZenchouShuuryouGoFlg == TRUE;
+																						}
+																						else {
+																							//NO
+																						}
+																					}
+																					else {
+																						//NO
+																					}
+																				}
+																			}
+																		}
+
+																	}
+																}
+															}
+														}
+
+													}
+												}
+											}
+
+
+										}
+									}
+								}
+							}
+						}
+
+					}
+
+				}
+			}
+
+		}
+
+
+
+		//--------------------------------
+		//ﾏｶ高確管理処理
+		//--------------------------------
+		SubA_PrjStgNml_MakKouMan();
+
+
+
+
+
+
+		//副Lev処理
+		SubA_PrjStgNml_FukLev();
+
+		//[通常副種別] ←0
+		g_Base.Stg.Nml.SubANmlFukTyp == 0;
+
+		//通常副抽せん
+		result = SubA_PrjCmn_SubLotFunc_GetEvent(D_LOT_S_NML_FUK_NML_FUK);
+		//[通常副種別]←結果
+		g_Base.Stg.Nml.SubANmlFukTyp = result;
+
+
+
+		//------------------------------------------------------------------------------
+		//主演出処理_通常ｽﾃｰｼﾞ
+		//------------------------------------------------------------------------------
+		SubA_PrjStgNml_NmlStgMain();
+
+		//ｼﾅﾘｵ中?
+		if (SubA_PrjCmn_IsSenarioRun(&g_Base.Stg.Matagi.MainSnr) == FALSE) {
+			//YES
+				//終了
+		}
+		else {
+			//NO
+				//[ｼﾅﾘｵ開始G]>0且つ[ｼﾅﾘｵ開始までG]=0?
+			if (g_Base.Stg.Nml.SubANmlSceStaG > 0 && g_Base.Stg.Nml.SubANmlSceForStaG == 0) {
+				//YES
+				//[予約ｼﾅﾘｵ] を開始
+				SubA_PrjStgNml_NmlComYoySceDec();
+			}
+			else {
+				//NO
+				//ｼﾅﾘｵ抽せん_通常ｽﾃ
+				SubA_PrjCmn_SetSenario(D_LOT_S_NML_MAI_GAM, D_LOT_S_NML_SCE_LOT_NML_STG_TIT);
+			}
+		}
+
+
+
+
+
+		//----------------------------------------------------
+		//その他処理B_通常ｽﾃｰｼﾞ
+		//----------------------------------------------------
+		SubA_PrjStgNml_NmlStgOthB();
+
+		//[ﾀｲﾄﾙ表示ﾌﾗｸﾞ] ←0
+		g_Base.Stg.Nml.SubANmlTitDipFlg == FALSE;
+
+		//主演出のｲﾍﾞﾝﾄ属性[次lvﾀｲﾄﾙ]=必要?
+		if (SubA_PrjStgNml(D_EVT_NEXT_LV_TITLE) == TRUE) {
+			//YES
+			//[ﾀｲﾄﾙ表示ﾌﾗｸﾞ]←1
+			g_Base.Stg.Nml.SubANmlTitDipFlg == TRUE;
+		}
+		else {
+			//NO
+			//[通常激熱ﾌﾗｸﾞ]=1? 
+			if (g_Base.Stg.Nml.SubANmlGekiatuFlg == 1) {
+				//YES
+				//主演出のｲﾍﾞﾝﾄ属性[NMGM共通_激熱変換ｲﾍﾞﾝﾄ] = 0 ?
+				if (GET_EVT_TABLE_ATTR(SubA_PrjCmn_GetEventMain(), D_EVT_NMGM_CM_GEKI_EVENT) == 0) {
+					//NO
+					//主演出をｲﾍﾞﾝﾄ属性[NMGM共通_激熱変換ｲﾍﾞﾝﾄ]のｲﾍﾞﾝﾄに書き換え
+					SubA_PrjCmn_SetEventMain(D_EVT_NMGM_CM_GEKI_EVENT);
+				}
+				else {
+					//YES
+				}
+			}
+			else {
+				//NO
+				////主演出のｲﾍﾞﾝﾄ属性[NMGM共通_激熱制限]=激熱制限?
+				if (SubA_PrjCmn_CheckEvtAttrAll(D_EVT_NMGM_CM_GEKI_EVENT, D_EVT_NMGM_CM_GEKI_SEIGEN_ATTR_GEKINETSUSEIGEN)) {
+					//YES
+					//[通常激熱ﾌﾗｸﾞ]←1
+					g_Base.Stg.Nml.SubANmlGekiatuFlg == TRUE;
+					//[激熱非発生ｶｳﾝﾀ]←10
+					g_Base.Stg.Nml.SubANmlGekiHiCnt = 10;
+
+				}
+				else {
+					//NO
+					//[激熱非発生ｶｳﾝﾀ]=0?
+					if (g_Base.Stg.Nml.SubANmlGekiHiCnt == 0) {
+						//YES
+						//[通常激熱ﾌﾗｸﾞ]←0
+						g_Base.Stg.Nml.SubANmlGekiatuFlg = FALSE;
+					}
+					else {
+						//NO
+						//[激熱非発生ｶｳﾝﾀ]=0?
+						if (g_Base.Stg.Nml.SubANmlGekiHiCnt == 0) {
+							//YES
+							//[通常激熱ﾌﾗｸﾞ]←0
+							g_Base.Stg.Nml.SubANmlGekiatuFlg = FALSE;
+						}
+						else {
+							//NO
+							//主演出のｲﾍﾞﾝﾄ属性[NM_CZ示唆]=1?
+							if (SubA_PrjStgNml(D_EVT_NM_CZ_SISA) == 1) {
+								//YES
+								//[CZ示唆発生済みﾌﾗｸﾞ]←1
+								g_Base.Stg.Nml.SubANmlCZShisaHasseiZumiFuraguTyp = TRUE;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		//[前兆種別]=未設定? 
+		if (g_Base.Stg.Nml.SubANmlZenTyp == E_SUBA_NML_ZEN_TYP_NON) {
+			//NO
+			//[ﾌﾞﾛｯｸ残G]=0?
+			if (g_Base.Stg.Nml.SubANmlBlkZanG == 0) {
+				//YES
+				//[ｽﾃﾁｪﾝ予約]=1～6?
+				if (g_Base.Stg.Nml.SubANmlStgChgYoy >= 1 && g_Base.Stg.Nml.SubANmlStgChgYoy <= 6) {
+					//YES
+					//[次ｽﾃｰｼﾞ]←[ｽﾃﾁｪﾝ予約]
+					g_Base.Stg.Nml.SubANmlStgNex = g_Base.Stg.Nml.SubANmlStgChgYoy;
+
+				}
+				else {
+					//[通常ｼﾅﾘｵ属性]←0
+					g_Base.Stg.Nml.SubANmlSceTypeAttr = 0;
+					//[ﾌﾞﾛｯｸ状況]=[ﾌﾞﾛｯｸ回数]?
+					if (g_Base.Stg.Nml.SubANmlBlkSts == g_Base.Stg.Nml.SubANmlBlkNum) {
+						//NO
+						//[前兆再設定ﾌﾗｸﾞ]←1
+						g_Base.Stg.Nml.SubANmlZenSaiSetFlg = TRUE;
+					}
+					else {
+						//YES
+						//[通常ｽﾃ開始時初期化ﾌﾗｸﾞ]←1
+						g_Base.Stg.Nml.SubANmlStaIniFlg = TRUE;
+						//[ｽﾃﾁｪﾝ制限G]<3?
+						if (g_Base.Stg.Nml.SubANmlStgChgLimG < 3) {
+							//YES
+							//[ｽﾃﾁｪﾝ制限G]←3
+							g_Base.Stg.Nml.SubANmlStgChgLimG = 3;
+							//当該の主ｲﾍﾞﾝﾄ[通常_連続演出前兆終了] = 1 ?
+							if (SubA_PrjCmn_GetAttrData(g_Base.Cmn.Pr.EventMain, D_EVT_NM_REN_ZEN_FINISH) == 1) {
+								//YES
+								//[連続演出前兆終了後ﾌﾗｸﾞ]←1
+								g_Base.Stg.Nml.SubANmlCntPerfPrmEndFlg = TRUE;
+							}
+							else {
+								//NO
+								//[連続演出前兆終了後ﾌﾗｸﾞ]←0
+								g_Base.Stg.Nml.SubANmlCntPerfPrmEndFlg = FALSE;
+
+							}
+
+						}
+					}
+				}
+			}
+		}
+		else {
+			//YES
+			//[ｽﾃﾁｪﾝ予約]>0?
+			if (g_Base.Stg.Nml.SubANmlStgChgYoy > 0) {
+				//YES
+				//[次ｽﾃｰｼﾞ]←[ｽﾃﾁｪﾝ予約]
+				g_Base.Stg.Nml.SubANmlStgNex = g_Base.Stg.Nml.SubANmlStgChgYoy;
+
+			}
+		}
+
+		//-----------------------------------------------
+		//副演出処理_通常ｽﾃｰｼﾞ
+		//-----------------------------------------------
+		SubA_PrjStgNml_NmlStgDep();
+
+		//副_役報知
+		SubA_PrjStgNml_FukYakuhou();
+		//[副_役報知]←結果
+		g_Base.Stg.Nml.SubANmlYakHch = result;
+		//【LFﾌﾗｸﾞ】=1?
+		if (g_Base.Stg.Mn.LfFlg) {
+			//YES
+			//ﾛﾝﾌﾘﾀｲﾐﾝｸﾞ抽せん
+			SubA_PrjCmn_GetEvent(D_LOT_O_NML_FUK);
+			//主演出をﾛﾝﾌﾘｲﾍﾞﾝﾄに書き換え
+			SubA_PrjCmn_SetEventMain(GET_EVT_TABLE_ATTR);
+			//定義 
+			SubA_PrjCmn_SetEventMain(D_EVT_NML_LF_A);
+			//結果=0?
+			if (result == 0) {
+				//YES
+				//副_ﾛﾝﾌﾘ_即
+				SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_E_NML_FUK_LNG_FRZ_SOK);
+
+			}
+			else {
+				//NO
+				//副_ﾛﾝﾌﾘ_遅れ
+				SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_E_NML_FUK_LNG_FRZ_OKR);
+			}
+
+		}
+		else {
+			//NO
+			//当該の主ｲﾍﾞﾝﾄ[SU_世界観説明]=1?
+			if (SubA_PrjCmn_GetAttrData(g_Base.Cmn.Pr.EventMain, D_EVT_SU_SEKAI_SETU) == 1) {
+				//YES
+				//[NM副禁止G]←3
+				g_Base.Stg.Nml.SubANmlNMFukuKinshiG == 3;
+				//[SU文言制限ｶｳﾝﾀ]←10
+				g_Base.Stg.Nml.SubANmlSUBungenSeigenKauntaa = 10;
+				//[世界観説明種別] ←当該の主ｲﾍﾞﾝﾄ[SU_世界観説明種別]
+				g_Base.Stg.Nml.SubANmlSekaikanSetsumeiShubetsu == D_EVT_SU_SEKAI_KIND;
+			}
+			else {
+				//NO
+				//ｼﾅﾘｵ中?
+				if (SubA_PrjCmn_IsSenarioRun(&g_Base.Stg.Matagi.MainSnr) == FALSE) {
+					//NO
+					//副ｼﾅﾘｵ_通常副
+					SubA_PrjCmn_GetEvent(D_LOT_S_NML_FUK_NML_FUK);
+					//副種別許可抽せん
+					result = SubA_PrjCmn_SubLotFunc_GetEtcLot(D_LOT_O_NM_SUB_PERMIT);
+					//抽せん結果=0?
+					if (result == 0) {
+						//YES
+						//「副ｼﾅﾘｵ_通常副」で返されたｲﾍﾞﾝﾄを以下の定義に書き換え
+						SubA_PrjCmn_GetEvent(D_LOT_S_NML_FUK_NML_FUK);
+						//定義
+						SubA_PrjCmn_SetEventSubL(0, D_EVT_NML_SENIOR_A);
+					}
+					else {
+						//NO
+						//「副ｼﾅﾘｵ_通常副」の展開された副ｲﾍﾞﾝﾄの属性[NM_SU制限]=1?
+						if (SubA_PrjCmn_GetEvent(D_LOT_S_NML_FUK_NML_FUK, D_EVT_NM_SU_SEIGEN) == 1) {
+							//YES
+							//当該の主ｲﾍﾞﾝﾄ_ｲﾍﾞﾝﾄ属性[NM_主演出判定]=0?
+							if (SubA_PrjCmn_GetAttrData(g_Base.Cmn.Pr.EventMain, D_EVT_NM_EN_JUGDE) == 0) {
+								//YES
+								//「副ｼﾅﾘｵ_通常副」で返されたｲﾍﾞﾝﾄを以下の定義に書き換え
+								SubA_PrjCmn_GetEvent(D_LOT_S_NML_FUK_NML_FUK);
+								//定義
+								SubA_PrjCmn_SetEventSubL(0, D_EVT_NML_SENIOR_A);
+							}
+							else {
+								//NO
+								//副ｼﾅﾘｵ_通常副の副ｲﾍﾞﾝﾄのｲﾍﾞﾝﾄ属性[NM_BIG示唆発生]=1?
+								if (SubA_PrjCmn_CheckEvtAttrSub(SubA_PrjCmn_GetEvent(D_LOT_S_NML_FUK_NML_FUK), D_EVT_NM_BIG_SISA) == 1) {
+									//YES
+									//[BIG示唆ﾌﾗｸﾞ]←0
+									g_Base.Stg.Nml.SubANmlBIGShisaFlg == FALSE;
+									//[BIG示唆前兆終了後ﾌﾗｸﾞ]←0
+									g_Base.Stg.Nml.SubANmlBIGShisaZenchouShuuryouGoFlg == FALSE;
+									//[BIG示唆]←0
+									g_Base.Stg.Nml.SubANmlBIGShisaFlg == FALSE;
+
+									//[BIG示唆ｹﾞｰﾑ数種別]←0
+									g_Base.Stg.Nml.SubANmlBIGShisaGSuuShubetsuTyp == FALSE;
+
+								}
+								else {
+									//NO
+									//副ｼﾅﾘｵ_通常副の副ｲﾍﾞﾝﾄのｲﾍﾞﾝﾄ属性[NM副発生]=1?
+									if (SubA_PrjCmn_CheckEvtAttrSub(SubA_PrjCmn_GetEvent(D_LOT_S_NML_FUK_NML_FUK), D_EVT_NM_HUKU_SHUTU) == 1) {
+										//YES
+										//[NM副ｶｳﾝﾀ]+1
+										g_Base.Stg.Nml.SubANmlNMSub++;
+									}
+									else {
+										//[NM副ｶｳﾝﾀ]←0
+										g_Base.Stg.Nml.SubANmlNMSub = 0;
+										//副_ｱｲﾃﾑ転送
+										SubA_PrjCmn_SubLotFunc_GetEvent(D_LOT_E_NML_FUK_ITEM_TRANS);
+										//副ｲﾍﾞﾝﾄ_ｱｲﾃﾑ転送のｲﾍﾞﾝﾄ属性[NM_ｱｲﾃﾑ転送_判定]=1?
+										if (SubA_PrjCmn_GetAttrData(g_Base.Cmn.Pr.EventSub[E_EVENT_SUB_NUMBER_SUB_D], D_EVT_NM_ITEM_JADGE) == 1) {
+											//[ｱｲﾃﾑ転送_高頻度ﾌﾗｸﾞ]←0
+											g_Base.Stg.Nml.SubANmlItmTraKouHindoFlg = FALSE;
+											//[ｱｲﾃﾑ転送_使用ﾌﾗｸﾞ]←1
+											g_Base.Stg.Nml.SubANmlItmTraUseFlg = TRUE;
+										}
+										else {
+											//NO
+											//副ｲﾍﾞﾝﾄ_ｱｲﾃﾑ転送のｲﾍﾞﾝﾄ属性[NM_ｱｲﾃﾑ転送_3択発生]=1?
+											if (SubA_PrjCmn_GetAttrData(g_Base.Cmn.Pr.EventSub[E_EVENT_SUB_NUMBER_SUB_D], D_EVT_NM_ITEM_3CHOISE) == 1) {
+												//YES
+												//[ｱｲﾃﾑ転送_3択示唆発生済ﾌﾗｸﾞ]←1
+												g_Base.Stg.Nml.SubANmlItmTraSanTakuFlg = TRUE;
+											}
+											else {
+												//NO
+												//副ｲﾍﾞﾝﾄ_ｱｲﾃﾑ転送のｲﾍﾞﾝﾄ属性[NM_ｱｲﾃﾑ転送_設定示唆発生]=1?
+												if (SubA_PrjCmn_GetAttrData(g_Base.Cmn.Pr.EventSub[E_EVENT_SUB_NUMBER_SUB_D], D_EVT_NM_ITEM_SETTEISISA) == 1) {
+													//YES
+													//[ｱｲﾃﾑ転送_設定示唆発生済ﾌﾗｸﾞ]←1
+													g_Base.Stg.Nml.SubANmlItmTraSanTakuFlg = TRUE;
+												}
+												else {
+													//NO
+													//[前兆示唆種別]=2?
+													if (g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp = E_SUBA_NML_ZENCHOU_SHISA_SHUBETSU_2) {
+														//YES
+														//当該の主ｲﾍﾞﾝﾄ[MNL_前兆示唆消去]=1?
+														if (GET_EVT_TABLE_ATTR(SubA_PrjCmn_GetEventMain(), D_EVT_NML_ZEN_SISA_DELE) == 1) {
+															//YES
+															//[前兆示唆種別]←3
+															g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp == 3;
+														}
+														else {
+															//NO
+															//副_先ﾊﾞﾚ
+															SubA_PrjCmn_SubLotFunc_GetEvent(D_LOT_E_NML_FUKU_SAKI_BARE);
+														}
+
+													}
+													else {
+														//NO
+														//[前兆種別]≧6且つ前遊技_[前兆種別]≦3?
+														if (g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp >= 6 && g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp <= 3) {
+															//NO
+															//当該の主ｲﾍﾞﾝﾄ[NML_途中前兆開始]=1?
+															if (SubA_PrjCmn_GetAttrData(SubA_PrjCmn_GetEventMain(), D_EVT_NML_ZEN_SISA_DELE) == 1) {
+																//NO
+																//[ｻﾌﾞﾌﾗｸﾞ]=9or14or15? 
+																if (g_Base.Cmn.Pr.SubFlag == D_SUB_FLAG_K_CHE ||
+																	g_Base.Cmn.Pr.SubFlag == D_SUB_FLAG_KCHA1 ||
+																	g_Base.Cmn.Pr.SubFlag == D_SUB_FLAG_KCHA2) {
+																	//NO
+																	//[前兆種別]≧6且つ[前兆進行G] = 1且つ[ｽﾃｰｼﾞ] = 4 / 5且つ[ｻﾌﾞﾌﾗｸﾞ]≧8 ?
+																	if (g_Base.Stg.Nml.SubANmlZenTyp >= E_SUBA_NML_ZEN_TYP_CZC &&
+																		g_Base.Stg.Nml.SubANmlZenPrgG == 1 &&
+																		g_Base.Stg.Nml.SubANmlStgNow == 4 / 5 &&
+																		g_Base.Cmn.Pr.SubFlag >= D_SUB_FLAG_J_CHE) {
+																	}
+																}
+															}
+														}
+														else {
+															//YES
+															//[ｻﾌﾞﾌﾗｸﾞ] ≧8 ?
+															if (g_Base.Cmn.Pr.SubFlag >= D_SUB_FLAG_J_CHE) {
+																//YES
+																//[前兆示唆種別]←1
+																g_Base.Stg.Nml.SubANmlZenchouShisaShubetsuTyp == 1;
+
+																//前兆示唆色抽せん
+																result = SubA_PrjCmn_SubLotFunc_GetEvent(D_LOT_E_CZ_FUK_CHAN);
+																//[前兆示唆色]←結果
+																g_Base.Stg.Nml.SubANmlZenchouShisaIroTyp = result;
+
+																//副_前兆示唆出現
+																SubA_PrjCmn_SubLotFunc_GetEvent(D_LOT_E_NML_FUK_ZENCHOU_SHISA_SHUTSUGEN);
+
+																//副_先ﾊﾞﾚ
+																SubA_PrjCmn_SubLotFunc_GetEvent(D_LOT_E_NML_FUKU_SAKI_BARE);
+															}
+														}
+
+													}
+												}
+											}
+
+
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+}
