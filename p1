@@ -1,3 +1,22 @@
+//Khai báo hàm
+//事前処理_通常ｽﾃｰｼﾞ
+void SubA_PrjStgNml_NmlStgPre(void);
+
+//ｽﾃｰｼﾞ未設定時処理
+void SubA_PrjStgNml_StgNon(void); 
+
+//NML共通_事前処理
+void SubA_PrjStgNml_ComPre(void);
+
+
+//前兆管理処理_通常ｽﾃｰｼﾞ
+void SubA_PrjStgNml_NmlStgZenKan(void);
+
+//前兆再設定処理_通常ｽﾃ
+void SubA_PrjStgNml_NmlStgZenSai(void);
+
+
+
 //前兆管理処理_通常ｽﾃｰｼﾞ
 		SubA_PrjStgNml_ZenKan();
 		//[前兆再設定ﾌﾗｸﾞ]=1?
