@@ -1,0 +1,461 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Windows.Forms;
+
+namespace コマンドデータ成形ツール
+{
+    public partial class Form1 : Form
+    {
+        private class ThongTinFileTab
+        {
+            public string DuongDanFile { get; set; }
+            public byte[] DuLieuBytes { get; set; }
+            public ListView BangHienThi { get; set; }
+        }
+
+        private Dictionary<TabPage, ThongTinFileTab> danhSachTabMo = new Dictionary<TabPage, ThongTinFileTab>();
+
+        private ContextMenuStrip menuDongTab;
+        private ToolStripMenuItem itemDongTabHienTai;
+
+        public Form1()
+        {
+            InitializeComponent();
+            WindowState = FormWindowState.Maximized;
+
+            // =========================================================================
+            // CẤU HÌNH ĐỘ RỘNG TAB VÀ KÍCH HOẠT VẼ DẤU X NỘI BỘ TRÊN TỪNG TAB
+            // =========================================================================
+            tabControlFiles.DrawMode = TabDrawMode.OwnerDrawFixed;
+
+            // Ép mỗi Tab rộng 150 pixel, cao 22 pixel để có đủ chỗ trống cho cả Tên file và dấu X kế bên
+            tabControlFiles.ItemSize = new System.Drawing.Size(150, 22);
+            tabControlFiles.SizeMode = TabSizeMode.Fixed;
+
+            // Đăng ký sự kiện tự vẽ và sự kiện click chuột trúng dấu X
+            tabControlFiles.DrawItem += new DrawItemEventHandler(tabControlFiles_DrawItem);
+            tabControlFiles.MouseDown += new MouseEventHandler(tabControlFiles_MouseDown);
+            // =========================================================================
+
+            splitMainHorizontal.Panel1MinSize = 80;
+            splitMainHorizontal.Panel2MinSize = 80;
+            splitMainHorizontal.IsSplitterFixed = false;
+
+            splitTopVertical.BackColor = System.Drawing.Color.LightGray;
+            splitTopVertical.Panel1MinSize = 50;
+            splitTopVertical.Panel2MinSize = 100;
+            splitTopVertical.IsSplitterFixed = false;
+
+            textBox1.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            button1.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            button3.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+
+            menuDongTab = new ContextMenuStrip();
+            itemDongTabHienTai = new ToolStripMenuItem("Đóng Tab này (Tắt file)");
+            itemDongTabHienTai.Click += new EventHandler(menuDongTabHienTai_Click);
+            menuDongTab.Items.Add(itemDongTabHienTai);
+        }
+
+        private void ThemFileVaoTab(string filePath)
+        {
+            foreach (var item in danhSachTabMo.Values)
+            {
+                if (item.DuongDanFile.Equals(filePath, StringComparison.OrdinalIgnoreCase)) return;
+            }
+
+            byte[] duLieuFile = File.ReadAllBytes(filePath);
+            TabPage tabMoi = new TabPage(Path.GetFileName(filePath));
+
+            ListView lvMoi = new ListView();
+            lvMoi.Dock = DockStyle.Fill;
+            lvMoi.View = View.Details;
+            lvMoi.Font = new System.Drawing.Font("Consolas", 10F);
+            tabMoi.Controls.Add(lvMoi);
+
+            ThongTinFileTab thongTin = new ThongTinFileTab
+            {
+                DuongDanFile = filePath,
+                DuLieuBytes = duLieuFile,
+                BangHienThi = lvMoi
+            };
+            danhSachTabMo.Add(tabMoi, thongTin);
+
+            tabControlFiles.TabPages.Add(tabMoi);
+            tabControlFiles.SelectedTab = tabMoi;
+
+            CapNhatDuLieuLenListView(lvMoi, duLieuFile);
+            GhiLogOutput($"Đã tải file thành công: {filePath}");
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            menuMoFile.Show(button1, new System.Drawing.Point(0, button1.Height));
+        }
+
+        private void menuChonFile_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Filter = "Log File|*.bin;*.log;*.txt|All Files|*.*";
+                ofd.Multiselect = true;
+
+                if (ofd.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        int fileCount = 0;
+                        foreach (string file in ofd.FileNames)
+                        {
+                            ThemFileVaoTab(file);
+                            fileCount++;
+                        }
+                        GhiLogOutput($"✔ Đã tải xong {fileCount} file vừa chọn.");
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Lỗi mở danh sách file: {ex.Message}", "Lỗi");
+                    }
+                }
+            }
+        }
+
+        private void button2_Click_1(object sender, EventArgs e)
+        {
+            string chuoiGoc = textBox1.Text.Trim().ToUpper();
+
+            if (string.IsNullOrEmpty(chuoiGoc)) return;
+            if (tabControlFiles.TabPages.Count == 0)
+            {
+                GhiLogOutput("Vui lòng mở File trước khi tìm kiếm!");
+                return;
+            }
+            string chuoiNhapHex = chuoiGoc.Replace(" ", "");
+
+            GhiLogOutput($"\nĐang tìm kiếm");
+
+            if (!System.Text.RegularExpressions.Regex.IsMatch(chuoiNhapHex, @"^[0-9A-F]+$"))
+            {
+                GhiLogOutput("Chuỗi nhập vào chứa ký tự không hợp lệ!");
+                return;
+            }
+
+            foreach (TabPage tab in tabControlFiles.TabPages)
+            {
+                if (!danhSachTabMo.ContainsKey(tab)) continue;
+
+                ThongTinFileTab fileInfo = danhSachTabMo[tab];
+                byte[] fileBytes = fileInfo.DuLieuBytes;
+                string tenFile = Path.GetFileName(fileInfo.DuongDanFile);
+
+                if (fileBytes.Length == 0) continue;
+
+                System.Text.StringBuilder sbHexFile = new System.Text.StringBuilder(fileBytes.Length * 2);
+                foreach (byte b in fileBytes)
+                {
+                    sbHexFile.Append(b.ToString("X2"));
+                }
+                string chuoiHexToanFile = sbHexFile.ToString();
+
+                int indexHexTimThay = chuoiHexToanFile.LastIndexOf(chuoiNhapHex);
+
+                if (indexHexTimThay != -1)
+                {
+                    int indexKyTuHexCuoi = indexHexTimThay + chuoiNhapHex.Length;
+                    int viTriByteChatDuoi = indexKyTuHexCuoi / 2;
+                    int viTriByteBatDau = indexHexTimThay / 2;
+                    if (viTriByteChatDuoi > fileBytes.Length) viTriByteChatDuoi = fileBytes.Length;
+                    if (viTriByteChatDuoi <= 0) viTriByteChatDuoi = 1;
+
+                    byte[] temporaryBytes = new byte[viTriByteChatDuoi];
+                    Array.Copy(fileBytes, 0, temporaryBytes, 0, viTriByteChatDuoi);
+                    fileInfo.DuLieuBytes = temporaryBytes;
+
+                    GhiLogOutput($"Đã hiện kết quả");
+
+                    CapNhatDuLieuLenListView(fileInfo.BangHienThi, fileInfo.DuLieuBytes);
+
+                    ListView lv = fileInfo.BangHienThi;
+                    if (lv != null && lv.Items.Count > 0)
+                    {
+                        int rowIndex = viTriByteBatDau / 16;
+                        if (rowIndex >= lv.Items.Count) rowIndex = lv.Items.Count - 1;
+                        if (rowIndex < 0) rowIndex = 0;
+
+                        lv.Items[rowIndex].Selected = true;
+                        lv.Items[rowIndex].Focused = true;
+
+                        lv.Items[rowIndex].BackColor = System.Drawing.Color.LightGreen;
+                        lv.Items[rowIndex].EnsureVisible();
+
+                        lv.Focus();
+                    }
+                }
+                else
+                {
+                    GhiLogOutput($" Không tìm thấy từ [{chuoiGoc}] nào.");
+                }
+            }
+        }
+
+        private void menuChonThuMuc_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.ValidateNames = false;
+                ofd.CheckFileExists = false;
+                ofd.CheckPathExists = true;
+                ofd.FileName = "Folder Selection.";
+
+                if (ofd.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        string duongDanThuMucCha = Path.GetDirectoryName(ofd.FileName);
+                        if (string.IsNullOrEmpty(duongDanThuMucCha)) return;
+
+                        string[] cacFileTimThay = Directory.GetFiles(duongDanThuMucCha, "*.*", SearchOption.AllDirectories);
+                        int count = 0;
+
+                        foreach (string file in cacFileTimThay)
+                        {
+                            string ext = Path.GetExtension(file).ToLower();
+                            if (ext == ".bin" || ext == ".log" || ext == ".txt")
+                            {
+                                ThemFileVaoTab(file);
+                                count++;
+                            }
+                        }
+                        GhiLogOutput($"Đã quét thư mục '{Path.GetFileName(duongDanThuMucCha)}' và tải {count} file lên các Tab.");
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Lỗi quét thư mục: {ex.Message}", "Lỗi");
+                    }
+                }
+            }
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            TabPage tabHienTai = tabControlFiles.SelectedTab;
+            if (tabHienTai == null || !danhSachTabMo.ContainsKey(tabHienTai)) return;
+
+            ThongTinFileTab fileInfo = danhSachTabMo[tabHienTai];
+            if (fileInfo.DuLieuBytes == null || fileInfo.DuLieuBytes.Length == 0) return;
+
+            try
+            {
+                File.WriteAllBytes(fileInfo.DuongDanFile, fileInfo.DuLieuBytes);
+                GhiLogOutput($"[LƯU FILE] Đã lưu thành công vào: {fileInfo.DuongDanFile}");
+                MessageBox.Show("Đã lưu file thành công!", "Thông báo");
+            }
+            catch (Exception ex)
+            {
+                GhiLogOutput($"[LỖI LƯU TỆP]{ex.Message}");
+                MessageBox.Show($"Lỗi lưu file {ex.Message}", "Lỗi");
+            }
+        }
+
+        private void menuDongTabHienTai_Click(object sender, EventArgs e)
+        {
+            if (tabControlFiles.SelectedTab != null) XửLýTắtTab(tabControlFiles.SelectedTab);
+        }
+
+        private void XửLýTắtTab(TabPage tab)
+        {
+            if (tab == null || !danhSachTabMo.ContainsKey(tab)) return;
+
+            string tenFile = tab.Text;
+            ThongTinFileTab fileInfo = danhSachTabMo[tab];
+
+            // 1. KIỂM TRA XEM FILE ĐÃ BỊ CHỈNH SỬA (BĂM CẮT) HAY CHƯA
+            bool daChinhSua = false;
+            try
+            {
+                // Lấy thông tin độ dài của file gốc thực tế trên ổ cứng
+                long doDaiFileGoc = new FileInfo(fileInfo.DuongDanFile).Length;
+
+                // Nếu độ dài mảng byte trên RAM hiện tại khác với file gốc -> Đã có chỉnh sửa!
+                if (fileInfo.DuLieuBytes != null && fileInfo.DuLieuBytes.Length != doDaiFileGoc)
+                {
+                    daChinhSua = true;
+                }
+            }
+            catch (Exception)
+            {
+                // Bọc lót nếu file gốc bị ai đó xóa mất ngoài ổ cứng thì coi như có sửa đổi để cảnh báo người dùng
+                daChinhSua = true;
+            }
+
+            // 2. NẾU ĐÃ CÓ CHỈNH SỬA -> KÍCH HOẠT QUY TRÌNH HỎI LƯU BIÊN BẢN 3 TẦNG
+            if (daChinhSua)
+            {
+                // TẦNG 1: Hỏi xác nhận muốn đóng Tab file này hay không
+                DialogResult confirmDong = MessageBox.Show(
+                    $"Bạn có chắc chắn muốn tắt file '{tenFile}' không?",
+                    "Xác nhận đóng Tab",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+
+                if (confirmDong == DialogResult.No) return; // Người dùng bấm No -> Hủy, giữ nguyên Tab
+
+                // TẦNG 2: Hỏi người dùng có muốn LƯU lại dữ liệu (đã băm cắt ngắn) trước khi tắt không
+                DialogResult confirmLuu = MessageBox.Show(
+                    $"File '{tenFile}' ĐÃ CÓ THAY ĐỔI DỮ LIỆU!\nBạn có muốn LƯU lại thay đổi trước khi đóng không?",
+                    "Thông báo lưu dữ liệu",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning
+                );
+
+                if (confirmLuu == DialogResult.Yes)
+                {
+                    // TẦNG 3: Hỏi cách lưu (Yes = Lưu đè file cũ | No = Lưu thành file mới)
+                    DialogResult cachLuu = MessageBox.Show(
+                        "Bấm [YES] để LƯU ĐÈ (Ghi đè file gốc).\nBấm [NO] để LƯU THÀNH FILE MỚI (Save As).",
+                        "Chọn phương thức lưu file",
+                        MessageBoxButtons.YesNoCancel,
+                        MessageBoxIcon.Question
+                    );
+
+                    if (cachLuu == DialogResult.Cancel) return; // Bấm Cancel -> Hủy toàn bộ tiến trình đóng
+
+                    if (cachLuu == DialogResult.Yes)
+                    {
+                        // === HƯỚNG 1: LƯU ĐÈ FILE CŨ ===
+                        try
+                        {
+                            File.WriteAllBytes(fileInfo.DuongDanFile, fileInfo.DuLieuBytes);
+                            GhiLogOutput($"[LƯU FILE] Đã lưu đè thành công vào: {fileInfo.DuongDanFile}");
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show($"Lỗi lưu đè file: {ex.Message}", "Lỗi");
+                            return;
+                        }
+                    }
+                    else if (cachLuu == DialogResult.No)
+                    {
+                        // === HƯỚNG 2: LƯU THÀNH FILE MỚI (SAVE AS) ===
+                        using (SaveFileDialog sfd = new SaveFileDialog())
+                        {
+                            sfd.FileName = "Cắt_" + Path.GetFileName(fileInfo.DuongDanFile);
+                            sfd.Filter = "Log File|*.bin;*.log;*.txt|All Files|*.*";
+
+                            if (sfd.ShowDialog() == DialogResult.OK)
+                            {
+                                try
+                                {
+                                    File.WriteAllBytes(sfd.FileName, fileInfo.DuLieuBytes);
+                                    GhiLogOutput($"[SAVE AS] Đã lưu file mới thành công tại: {sfd.FileName}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    MessageBox.Show($"Lỗi Save As file: {ex.Message}", "Lỗi");
+                                    return;
+                                }
+                            }
+                            else
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+           
+            // THỰC HIỆN XÓA TAB VÀ GIẢI PHÓNG RAM
+            string duongDanGoc = fileInfo.DuongDanFile;
+            danhSachTabMo.Remove(tab);
+            tabControlFiles.TabPages.Remove(tab);
+            GhiLogOutput($"Đã đóng tab file {duongDanGoc}");
+        }
+
+        private void CapNhatDuLieuLenListView(ListView lv, byte[] bytesToDisplay)
+        {
+            if (lv == null) return;
+            lv.BeginUpdate();
+            lv.Items.Clear();
+            lv.Columns.Clear();
+            lv.GridLines = true;
+            lv.FullRowSelect = true;
+
+            lv.Columns.Add("Offset", 100);
+            lv.Columns.Add("Hex Data", 380);
+            lv.Columns.Add("Decoded Text", 200);
+
+            System.Text.Encoding encodingNhat = System.Text.Encoding.GetEncoding("Shift-JIS");
+            int bytesPerLine = 16;
+
+            for (int i = 0; i < bytesToDisplay.Length; i += bytesPerLine)
+            {
+                if (lv.Items.Count >= 5000) break;
+                string offsetStr = i.ToString("x8").ToUpper();
+                int remainingBytes = Math.Min(bytesPerLine, bytesToDisplay.Length - i);
+                byte[] lineBytes = new byte[remainingBytes];
+                Array.Copy(bytesToDisplay, i, lineBytes, 0, remainingBytes);
+
+                List<string> hexChunks = new List<string>();
+                foreach (byte b in lineBytes) hexChunks.Add(b.ToString("x2").ToUpper());
+                string hexStr = string.Join(" ", hexChunks);
+
+                string rawText = encodingNhat.GetString(lineBytes);
+                string cleanText = "";
+                foreach (char c in rawText) cleanText += (c != '\0' && !char.IsControl(c)) ? c : '.';
+
+                ListViewItem item = new ListViewItem(offsetStr);
+                item.SubItems.Add(hexStr);
+                item.SubItems.Add(cleanText);
+                lv.Items.Add(item);
+            }
+            lv.EndUpdate();
+        }
+
+        private void GhiLogOutput(string noiDung)
+        {
+            rtbOutput.AppendText(noiDung + "\n");
+            rtbOutput.SelectionStart = rtbOutput.Text.Length;
+            rtbOutput.ScrollToCaret();
+        }
+
+        private void tabControlFiles_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            try
+            {
+                TabPage tab = tabControlFiles.TabPages[e.Index];
+                System.Drawing.Rectangle tabRect = tabControlFiles.GetTabRect(e.Index);
+
+                if (e.State == DrawItemState.Selected)
+                {
+                    e.Graphics.FillRectangle(System.Drawing.Brushes.White, tabRect);
+                }
+                else
+                {
+                    e.Graphics.FillRectangle(System.Drawing.Brushes.LightGray, tabRect);
+                }
+
+                System.Drawing.Font fontTab = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Regular);
+                e.Graphics.DrawString(tab.Text, fontTab, System.Drawing.Brushes.Black, tabRect.X + 5, tabRect.Y + 4);
+
+                e.Graphics.DrawString("X", fontTab, System.Drawing.Brushes.Red, tabRect.Right - 18, tabRect.Y + 4);
+            }
+            catch (Exception) { }
+        }
+
+        private void tabControlFiles_MouseDown(object sender, MouseEventArgs e)
+        {
+            for (int i = 0; i < tabControlFiles.TabCount; i++)
+            {
+                System.Drawing.Rectangle tabRect = tabControlFiles.GetTabRect(i);
+                System.Drawing.Rectangle xRect = new System.Drawing.Rectangle(tabRect.Right - 20, tabRect.Y, 20, tabRect.Height);
+
+                if (xRect.Contains(e.Location))
+                {
+                    XửLýTắtTab(tabControlFiles.TabPages[i]);
+                    break;
+                }
+            }
+        }
+    }
+}
