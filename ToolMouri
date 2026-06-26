@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
+using System.Text.RegularExpressions; // 🌟 Thêm thư viện Regex ở đây
 using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.Button;
 
 namespace コマンドデータ成形ツール
 {
@@ -11,32 +14,28 @@ namespace コマンドデータ成形ツール
         {
             public string DuongDanFile { get; set; }
             public byte[] DuLieuBytes { get; set; }
+            public byte[] DuLieuGocBytes { get; set; }
             public ListView BangHienThi { get; set; }
         }
 
         private Dictionary<TabPage, ThongTinFileTab> danhSachTabMo = new Dictionary<TabPage, ThongTinFileTab>();
-
-        private ContextMenuStrip menuDongTab;
-        private ToolStripMenuItem itemDongTabHienTai;
 
         public Form1()
         {
             InitializeComponent();
             WindowState = FormWindowState.Maximized;
 
-            // =========================================================================
-            // CẤU HÌNH ĐỘ RỘNG TAB VÀ KÍCH HOẠT VẼ DẤU X NỘI BỘ TRÊN TỪNG TAB
-            // =========================================================================
             tabControlFiles.DrawMode = TabDrawMode.OwnerDrawFixed;
-
-            // Ép mỗi Tab rộng 150 pixel, cao 22 pixel để có đủ chỗ trống cho cả Tên file và dấu X kế bên
             tabControlFiles.ItemSize = new System.Drawing.Size(150, 22);
             tabControlFiles.SizeMode = TabSizeMode.Fixed;
 
-            // Đăng ký sự kiện tự vẽ và sự kiện click chuột trúng dấu X
             tabControlFiles.DrawItem += new DrawItemEventHandler(tabControlFiles_DrawItem);
             tabControlFiles.MouseDown += new MouseEventHandler(tabControlFiles_MouseDown);
-            // =========================================================================
+
+            if (listBox1 != null)
+            {
+                listBox1.SelectedIndexChanged += new EventHandler(listBox1_SelectedIndexChanged);
+            }
 
             splitMainHorizontal.Panel1MinSize = 80;
             splitMainHorizontal.Panel2MinSize = 80;
@@ -51,10 +50,8 @@ namespace コマンドデータ成形ツール
             button1.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             button3.Anchor = AnchorStyles.Top | AnchorStyles.Left;
 
-            menuDongTab = new ContextMenuStrip();
-            itemDongTabHienTai = new ToolStripMenuItem("Đóng Tab này (Tắt file)");
-            itemDongTabHienTai.Click += new EventHandler(menuDongTabHienTai_Click);
-            menuDongTab.Items.Add(itemDongTabHienTai);
+            // 🌟 ĐĂNG KÝ HỆ THỐNG ĐỌC BẢNG MÃ TIẾNG NHẬT (Tránh sập App khi Regex gọi Shift-JIS)
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         }
 
         private void ThemFileVaoTab(string filePath)
@@ -65,7 +62,8 @@ namespace コマンドデータ成形ツール
             }
 
             byte[] duLieuFile = File.ReadAllBytes(filePath);
-            TabPage tabMoi = new TabPage(Path.GetFileName(filePath));
+            string tenFile = Path.GetFileName(filePath);
+            TabPage tabMoi = new TabPage(tenFile);
 
             ListView lvMoi = new ListView();
             lvMoi.Dock = DockStyle.Fill;
@@ -77,6 +75,7 @@ namespace コマンドデータ成形ツール
             {
                 DuongDanFile = filePath,
                 DuLieuBytes = duLieuFile,
+                DuLieuGocBytes = (byte[])duLieuFile.Clone(),
                 BangHienThi = lvMoi
             };
             danhSachTabMo.Add(tabMoi, thongTin);
@@ -84,8 +83,45 @@ namespace コマンドデータ成形ツール
             tabControlFiles.TabPages.Add(tabMoi);
             tabControlFiles.SelectedTab = tabMoi;
 
+            if (listBox1 != null)
+            {
+                listBox1.Items.Add(tenFile);
+            }
+
             CapNhatDuLieuLenListView(lvMoi, duLieuFile);
-            GhiLogOutput($"Đã tải file thành công: {filePath}");
+            GhiLogOutput($"ファイルを正常に開きました");
+        }
+
+        private int NapDanhSachFile(IEnumerable<string> danhSachFile)
+        {
+            int count = 0;
+            foreach (string file in danhSachFile)
+            {
+                if (!File.Exists(file)) continue;
+
+                string ext = Path.GetExtension(file).ToLower();
+                if (ext == ".bin" || ext == ".log" || ext == ".txt")
+                {
+                    ThemFileVaoTab(file);
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private void listBox1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (listBox1.SelectedItem == null) return;
+            string tenFileDuocChon = listBox1.SelectedItem.ToString();
+
+            foreach (TabPage tab in tabControlFiles.TabPages)
+            {
+                if (tab.Text == tenFileDuocChon)
+                {
+                    tabControlFiles.SelectedTab = tab;
+                    break;
+                }
+            }
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -104,98 +140,247 @@ namespace コマンドデータ成形ツール
                 {
                     try
                     {
-                        int fileCount = 0;
-                        foreach (string file in ofd.FileNames)
-                        {
-                            ThemFileVaoTab(file);
-                            fileCount++;
-                        }
-                        GhiLogOutput($"✔ Đã tải xong {fileCount} file vừa chọn.");
+                        int count = NapDanhSachFile(ofd.FileNames);
+                        GhiLogOutput($"ファイルを正常に開きました (Đã mở {count} file)");
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show($"Lỗi mở danh sách file: {ex.Message}", "Lỗi");
+                        MessageBox.Show($"ファイルリストのオープンエラー: {ex.Message}", "エラー");
                     }
                 }
             }
         }
 
+        // =========================================================================
+        // NÚT TÌM KIẾM TỰ ĐỘNG CHUẨN: GÕ HEX RA HEX, GÕ "74 .. 67" RA REGEX CHUẨN ĐÉT
+        // =========================================================================
         private void button2_Click_1(object sender, EventArgs e)
         {
-            string chuoiGoc = textBox1.Text.Trim().ToUpper();
+            string chuoiGoc = textBox1.Text.Trim();
 
             if (string.IsNullOrEmpty(chuoiGoc)) return;
             if (tabControlFiles.TabPages.Count == 0)
             {
-                GhiLogOutput("Vui lòng mở File trước khi tìm kiếm!");
+                GhiLogOutput("検索を実行する前にファイルを開いてください！");
                 return;
             }
-            string chuoiNhapHex = chuoiGoc.Replace(" ", "");
 
-            GhiLogOutput($"\nĐang tìm kiếm");
+            // Chuẩn hóa chuỗi để kiểm tra xem có phải mã Hex thuần túy không
+            string chuoiNhapHex = chuoiGoc.ToUpper().Replace(" ", "");
 
-            if (!System.Text.RegularExpressions.Regex.IsMatch(chuoiNhapHex, @"^[0-9A-F]+$"))
+            // 🌟 KỊCH BẢN 1: Nếu người dùng nhập HEX thuần không dấu (Ví dụ: 746167) -> Chạy tìm Hex gốc
+            if (System.Text.RegularExpressions.Regex.IsMatch(chuoiNhapHex, @"^[0-9A-F]+$") && chuoiNhapHex.Length % 2 == 0)
             {
-                GhiLogOutput("Chuỗi nhập vào chứa ký tự không hợp lệ!");
+                int mảngSize = chuoiNhapHex.Length / 2;
+                byte[] bytesCanTim = new byte[mảngSize];
+                for (int i = 0; i < mảngSize; i++)
+                {
+                    bytesCanTim[i] = Convert.ToByte(chuoiNhapHex.Substring(i * 2, 2), 16);
+                }
+
+                GhiLogOutput($"\n--- 検索スキャン開始（Hex）: [{chuoiGoc.ToUpper()}] ---");
+                int soFileHex = 0;
+
+                foreach (TabPage tab in tabControlFiles.TabPages)
+                {
+                    if (!danhSachTabMo.ContainsKey(tab)) continue;
+
+                    ThongTinFileTab fileInfo = danhSachTabMo[tab];
+                    byte[] fileBytesGoc = fileInfo.DuLieuGocBytes ?? fileInfo.DuLieuBytes;
+                    if (fileBytesGoc == null || fileBytesGoc.Length < bytesCanTim.Length) continue;
+
+                    string tenFile = Path.GetFileName(fileInfo.DuongDanFile);
+                    int viTriByteTimThay = -1;
+
+                    for (int i = fileBytesGoc.Length - bytesCanTim.Length; i >= 0; i--)
+                    {
+                        bool khopHoanToan = true;
+                        for (int j = 0; j < bytesCanTim.Length; j++)
+                        {
+                            if (fileBytesGoc[i + j] != bytesCanTim[j])
+                            {
+                                khopHoanToan = false;
+                                break;
+                            }
+                        }
+                        if (khopHoanToan) { viTriByteTimThay = i; break; }
+                    }
+
+                    if (viTriByteTimThay != -1)
+                    {
+                        int viTriByteChatDuoi = viTriByteTimThay + bytesCanTim.Length;
+                        byte[] temporaryBytes = new byte[viTriByteChatDuoi];
+                        Array.Copy(fileBytesGoc, 0, temporaryBytes, 0, viTriByteChatDuoi);
+                        fileInfo.DuLieuBytes = temporaryBytes;
+
+                        CapNhatDuLieuLenListView(fileInfo.BangHienThi, fileInfo.DuLieuBytes);
+
+                        ListView lv = fileInfo.BangHienThi;
+                        if (lv != null && lv.Items.Count > 0)
+                        {
+                            int rowIndex = viTriByteTimThay / 16;
+                            if (rowIndex >= lv.Items.Count) rowIndex = lv.Items.Count - 1;
+                            if (rowIndex < 0) rowIndex = 0;
+
+                            lv.Items[rowIndex].Selected = true;
+                            lv.Items[rowIndex].Focused = true;
+                            lv.Items[rowIndex].BackColor = System.Drawing.Color.LightGreen;
+                            lv.Items[rowIndex].EnsureVisible();
+                        }
+
+                        GhiLogDieuHuong(tenFile, chuoiGoc.ToUpper());
+                        soFileHex++;
+                    }
+                }
+                GhiLogOutput($"--- 完了: {soFileHex} 個のファイルが見つかりました（Hex）。--- \n");
+            }
+            // 🌟 KỊCH BẢN 2: Nếu chuỗi nhập vào có chứa ".." hoặc chữ (Ví dụ: 74 .. 67) -> Chạy tìm Regex cột Hex + Text
+            else
+            {
+                Regex regex;
+                try
+                {
+                    // Chuyển chữ hoa để khớp chuẩn với bảng hiển thị ListView
+                    string patternXuLy = chuoiGoc.ToUpper();
+                    regex = new Regex(patternXuLy, RegexOptions.IgnoreCase);
+                }
+                catch (Exception ex)
+                {
+                    GhiLogOutput("Regex Error (Cú pháp lỗi): " + ex.Message);
+                    return;
+                }
+
+                GhiLogOutput($"\n--- Regex検索スキャン開始: [{chuoiGoc}] ---");
+                int soFileRegex = 0;
+
+                foreach (TabPage tab in tabControlFiles.TabPages)
+                {
+                    if (!danhSachTabMo.ContainsKey(tab)) continue;
+
+                    ThongTinFileTab fileInfo = danhSachTabMo[tab];
+                    ListView lv = fileInfo.BangHienThi;
+                    if (lv == null || lv.Items.Count == 0) continue;
+
+                    bool fileNayCoKhop = false;
+                    int dongTimThayDauTien = -1;
+                    string chuoiKhopDauTien = "";
+
+                    for (int rowIndex = 0; rowIndex < lv.Items.Count; rowIndex++)
+                    {
+                        if (lv.Items[rowIndex].SubItems.Count > 2)
+                        {
+                            // Lấy chuỗi hiển thị ở cột mã Hex (giữa) và cột text (phải)
+                            string cotHex = lv.Items[rowIndex].SubItems[1].Text.ToUpper();
+                            string cotText = lv.Items[rowIndex].SubItems[2].Text;
+
+                            Match mHex = regex.Match(cotHex);
+                            Match mText = regex.Match(cotText);
+
+                            if (mHex.Success || mText.Success)
+                            {
+                                fileNayCoKhop = true;
+                                lv.Items[rowIndex].Selected = true;
+                                lv.Items[rowIndex].Focused = true;
+                                lv.Items[rowIndex].BackColor = System.Drawing.Color.LightGreen;
+
+                                if (dongTimThayDauTien == -1)
+                                {
+                                    dongTimThayDauTien = rowIndex;
+                                    // Ưu tiên hiển thị chuỗi khớp của cột Hex lên Log điều hướng
+                                    chuoiKhopDauTien = mHex.Success ? mHex.Value : mText.Value;
+                                }
+                            }
+                            else
+                            {
+                                // Trả lại màu nền trắng nếu dòng này không có kết quả khớp
+                                lv.Items[rowIndex].BackColor = System.Drawing.SystemColors.Window;
+                            }
+                        }
+                    }
+
+                    if (fileNayCoKhop)
+                    {
+                        soFileRegex++;
+                        string tenFile = Path.GetFileName(fileInfo.DuongDanFile);
+                        if (dongTimThayDauTien != -1) lv.Items[dongTimThayDauTien].EnsureVisible();
+                        GhiLogDieuHuong(tenFile, chuoiKhopDauTien);
+                    }
+                }
+                GhiLogOutput($"--- Regex完了: {soFileRegex} 個のファイルが見つかりました。--- \n");
+            }
+        }
+
+        // =========================================================================
+        // 🌟 HÀM MỚI TOÀN DIỆN: TÌM KIẾM TEXT / LOG BẰNG PHƯƠNG PHÁP REGEX
+        // =========================================================================
+        private void TimKiemBangRegex(string pattern)
+        {
+            Regex regex;
+            try
+            {
+                // Khởi tạo Regex (Không phân biệt chữ hoa, chữ thường cho tiện)
+                regex = new Regex(pattern, RegexOptions.IgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                GhiLogOutput("Regex Error (Cú pháp lỗi): " + ex.Message);
                 return;
             }
+
+            GhiLogOutput($"\n--- Regex検索スキャン開始: [{pattern}] ---");
+            int soFileTimThay = 0;
 
             foreach (TabPage tab in tabControlFiles.TabPages)
             {
                 if (!danhSachTabMo.ContainsKey(tab)) continue;
 
                 ThongTinFileTab fileInfo = danhSachTabMo[tab];
-                byte[] fileBytes = fileInfo.DuLieuBytes;
-                string tenFile = Path.GetFileName(fileInfo.DuongDanFile);
+                byte[] fileBytesGoc = fileInfo.DuLieuGocBytes ?? fileInfo.DuLieuBytes;
+                if (fileBytesGoc == null) continue;
 
-                if (fileBytes.Length == 0) continue;
+                // Chuyển mảng Byte gốc thành Chuỗi text hệ Nhật Bản Shift-JIS để Regex dò tìm
+                string noiDungVanBan = Encoding.GetEncoding("Shift-JIS").GetString(fileBytesGoc);
+                Match m = regex.Match(noiDungVanBan);
 
-                System.Text.StringBuilder sbHexFile = new System.Text.StringBuilder(fileBytes.Length * 2);
-                foreach (byte b in fileBytes)
+                if (m.Success)
                 {
-                    sbHexFile.Append(b.ToString("X2"));
-                }
-                string chuoiHexToanFile = sbHexFile.ToString();
+                    string tenFile = Path.GetFileName(fileInfo.DuongDanFile);
 
-                int indexHexTimThay = chuoiHexToanFile.LastIndexOf(chuoiNhapHex);
+                    // Tính toán vị trí byte thực tế dựa trên vị trí ký tự tìm thấy
+                    int viTriKyTu = m.Index;
+                    byte[] bytesTruocMatch = Encoding.GetEncoding("Shift-JIS").GetBytes(noiDungVanBan.Substring(0, viTriKyTu));
+                    int viTriByteTimThay = bytesTruocMatch.Length;
 
-                if (indexHexTimThay != -1)
-                {
-                    int indexKyTuHexCuoi = indexHexTimThay + chuoiNhapHex.Length;
-                    int viTriByteChatDuoi = indexKyTuHexCuoi / 2;
-                    int viTriByteBatDau = indexHexTimThay / 2;
-                    if (viTriByteChatDuoi > fileBytes.Length) viTriByteChatDuoi = fileBytes.Length;
-                    if (viTriByteChatDuoi <= 0) viTriByteChatDuoi = 1;
+                    // Tiến hành cắt đuôi hiển thị dữ liệu y hệt như cơ chế Hex của ông
+                    int doDaiChuoiTimThay = Encoding.GetEncoding("Shift-JIS").GetByteCount(m.Value);
+                    int viTriByteChatDuoi = viTriByteTimThay + doDaiChuoiTimThay;
 
                     byte[] temporaryBytes = new byte[viTriByteChatDuoi];
-                    Array.Copy(fileBytes, 0, temporaryBytes, 0, viTriByteChatDuoi);
+                    Array.Copy(fileBytesGoc, 0, temporaryBytes, 0, viTriByteChatDuoi);
                     fileInfo.DuLieuBytes = temporaryBytes;
-
-                    GhiLogOutput($"Đã hiện kết quả");
 
                     CapNhatDuLieuLenListView(fileInfo.BangHienThi, fileInfo.DuLieuBytes);
 
+                    // Trỏ chuột nhảy thẳng đến dòng chứa kết quả Regex và tô màu xanh lá
                     ListView lv = fileInfo.BangHienThi;
                     if (lv != null && lv.Items.Count > 0)
                     {
-                        int rowIndex = viTriByteBatDau / 16;
+                        int rowIndex = viTriByteTimThay / 16;
                         if (rowIndex >= lv.Items.Count) rowIndex = lv.Items.Count - 1;
                         if (rowIndex < 0) rowIndex = 0;
 
                         lv.Items[rowIndex].Selected = true;
                         lv.Items[rowIndex].Focused = true;
-
                         lv.Items[rowIndex].BackColor = System.Drawing.Color.LightGreen;
                         lv.Items[rowIndex].EnsureVisible();
-
-                        lv.Focus();
                     }
-                }
-                else
-                {
-                    GhiLogOutput($" Không tìm thấy từ [{chuoiGoc}] nào.");
+
+                    GhiLogDieuHuong(tenFile, m.Value);
+                    soFileTimThay++;
                 }
             }
+
+            GhiLogOutput($"--- Regex完了: {soFileTimThay} 個のファイルが見つかりました。--- \n");
         }
 
         private void menuChonThuMuc_Click(object sender, EventArgs e)
@@ -205,6 +390,7 @@ namespace コマンドデータ成形ツール
                 ofd.ValidateNames = false;
                 ofd.CheckFileExists = false;
                 ofd.CheckPathExists = true;
+                ofd.Filter = "Folders|\n";
                 ofd.FileName = "Folder Selection.";
 
                 if (ofd.ShowDialog() == DialogResult.OK)
@@ -212,7 +398,7 @@ namespace コマンドデータ成形ツール
                     try
                     {
                         string duongDanThuMucCha = Path.GetDirectoryName(ofd.FileName);
-                        if (string.IsNullOrEmpty(duongDanThuMucCha)) return;
+                        if (string.IsNullOrEmpty(duongDanThuMucCha) || !Directory.Exists(duongDanThuMucCha)) return;
 
                         string[] cacFileTimThay = Directory.GetFiles(duongDanThuMucCha, "*.*", SearchOption.AllDirectories);
                         int count = 0;
@@ -226,11 +412,11 @@ namespace コマンドデータ成形ツール
                                 count++;
                             }
                         }
-                        GhiLogOutput($"Đã quét thư mục '{Path.GetFileName(duongDanThuMucCha)}' và tải {count} file lên các Tab.");
+                        GhiLogOutput($"フォルダ '{Path.GetFileName(duongDanThuMucCha)}' をスキャンし、{count} 個のファイルをタブに読み込みました");
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show($"Lỗi quét thư mục: {ex.Message}", "Lỗi");
+                        MessageBox.Show($"フォルダスキャンエラー：{ex.Message}", "エラー");
                     }
                 }
             }
@@ -238,109 +424,201 @@ namespace コマンドデータ成形ツール
 
         private void button3_Click(object sender, EventArgs e)
         {
-            TabPage tabHienTai = tabControlFiles.SelectedTab;
-            if (tabHienTai == null || !danhSachTabMo.ContainsKey(tabHienTai)) return;
-
-            ThongTinFileTab fileInfo = danhSachTabMo[tabHienTai];
-            if (fileInfo.DuLieuBytes == null || fileInfo.DuLieuBytes.Length == 0) return;
-
-            try
+            if (tabControlFiles.TabPages.Count == 0)
             {
-                File.WriteAllBytes(fileInfo.DuongDanFile, fileInfo.DuLieuBytes);
-                GhiLogOutput($"[LƯU FILE] Đã lưu thành công vào: {fileInfo.DuongDanFile}");
-                MessageBox.Show("Đã lưu file thành công!", "Thông báo");
+                GhiLogOutput(" 保存対象の開かれているファイルがありません！");
+                return;
             }
-            catch (Exception ex)
+
+            List<TabPage> danhSachTabDaSua = new List<TabPage>();
+            foreach (TabPage tab in tabControlFiles.TabPages)
             {
-                GhiLogOutput($"[LỖI LƯU TỆP]{ex.Message}");
-                MessageBox.Show($"Lỗi lưu file {ex.Message}", "Lỗi");
+                if (!danhSachTabMo.ContainsKey(tab)) continue;
+                ThongTinFileTab fileInfo = danhSachTabMo[tab];
+
+                bool daChinhSua = false;
+                try
+                {
+                    long doDaiFileGoc = new FileInfo(fileInfo.DuongDanFile).Length;
+                    if (fileInfo.DuLieuBytes != null && fileInfo.DuLieuBytes.Length != doDaiFileGoc)
+                    {
+                        daChinhSua = true;
+                    }
+                }
+                catch (Exception) { daChinhSua = true; }
+
+                if (daChinhSua) danhSachTabDaSua.Add(tab);
+            }
+
+            if (danhSachTabDaSua.Count == 0)
+            {
+                MessageBox.Show("保存が必要な変更済みファイルはありません。", "お知らせ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                GhiLogOutput("存処理を停止しました。");
+                return;
+            }
+
+            GhiLogOutput($"変更されたファイル {danhSachTabDaSua.Count} を検出しました。ファイル選択画面を表示します...");
+            List<TabPage> danhSachTabDuocChonXuly = new List<TabPage>();
+            using (var hopThoaiChonFile = new HopThoaiChonFileLuuCustom(danhSachTabDaSua))
+            {
+                if (hopThoaiChonFile.ShowDialog(this) == DialogResult.OK)
+                {
+                    danhSachTabDuocChonXuly = hopThoaiChonFile.DanhSachTabDuocChon;
+                }
+                else
+                {
+                    GhiLogOutput("ファイルの保存処理がキャンセルされました。");
+                    return;
+                }
+            }
+
+            if (danhSachTabDuocChonXuly.Count == 0)
+            {
+                MessageBox.Show("保存するファイルが選択されていません。", "お知らせ", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            DialogResult cachLuu;
+            using (var hopThoaiHoiPhuongThuc = new HopThoaiLuuDuyNhatCustom("保存方法の選択", "保存方法の確認"))
+            {
+                hopThoaiHoiPhuongThuc.Controls[0].Text = $" 選択された {danhSachTabDuocChonXuly.Count}  個のファイルについて、一括で「上書き保存」しますか？それとも個別に「新規保存」しますか？";
+                hopThoaiHoiPhuongThuc.ShowDialog(this);
+                cachLuu = hopThoaiHoiPhuongThuc.KetQua;
+            }
+
+            if (cachLuu == DialogResult.Cancel)
+            {
+                GhiLogOutput("上書き/新規保存方法の選択がキャンセルされました。");
+                return;
+            }
+
+            int thanhCong = 0;
+            List<string> tenFileThanhCong = new List<string>();
+
+            if (cachLuu == DialogResult.Yes)
+            {
+                GhiLogOutput($"一括上書き保存を開始します {danhSachTabDuocChonXuly.Count} file...");
+                foreach (TabPage tab in danhSachTabDuocChonXuly)
+                {
+                    ThongTinFileTab fileInfo = danhSachTabMo[tab];
+                    try
+                    {
+                        File.WriteAllBytes(fileInfo.DuongDanFile, fileInfo.DuLieuBytes);
+                        GhiLogOutput($"上書き保存に成功しました: {fileInfo.DuongDanFile}");
+                        tenFileThanhCong.Add(Path.GetFileName(fileInfo.DuongDanFile));
+                        thanhCong++;
+                    }
+                    catch (Exception ex) { GhiLogOutput($"上書き保存エラー: {ex.Message}"); }
+                }
+            }
+            else if (cachLuu == DialogResult.No)
+            {
+                GhiLogOutput($"{danhSachTabDuocChonXuly.Count}のファイルの個別新規保存処理を開始します...");
+                foreach (TabPage tab in danhSachTabDuocChonXuly)
+                {
+                    ThongTinFileTab fileInfo = danhSachTabMo[tab];
+                    string tenFileGoc = Path.GetFileName(fileInfo.DuongDanFile);
+
+                    using (SaveFileDialog sfd = new SaveFileDialog())
+                    {
+                        sfd.Title = $"新規保存エラー: {tenFileGoc}";
+                        sfd.FileName = tenFileGoc;
+                        sfd.Filter = "Log File|*.bin;*.log;*.txt|All Files|*.*";
+
+                        if (sfd.ShowDialog() == DialogResult.OK)
+                        {
+                            try
+                            {
+                                File.WriteAllBytes(sfd.FileName, fileInfo.DuLieuBytes);
+                                GhiLogOutput($"新規ファイルの保存に成功しました: {sfd.FileName}");
+                                tenFileThanhCong.Add(Path.GetFileName(sfd.FileName) + " (File mới)");
+                                thanhCong++;
+                            }
+                            catch (Exception ex) { GhiLogOutput($"ファイル保存エラー：{ex.Message}"); }
+                        }
+                    }
+                }
+            }
+
+            if (thanhCong > 0)
+            {
+                string chuoiDanhSach = string.Join("\n - ", tenFileThanhCong);
+                MessageBox.Show(
+                    $"{thanhCong} 個のファイルの保存に成功しました\n\n詳細リスト：\n - {chuoiDanhSach}",
+                    "成功", MessageBoxButtons.OK, MessageBoxIcon.Information
+                );
             }
         }
 
-        private void menuDongTabHienTai_Click(object sender, EventArgs e)
-        {
-            if (tabControlFiles.SelectedTab != null) XửLýTắtTab(tabControlFiles.SelectedTab);
-        }
-
-        private void XửLýTắtTab(TabPage tab)
+        private void XuLyTatTab(TabPage tab)
         {
             if (tab == null || !danhSachTabMo.ContainsKey(tab)) return;
 
             string tenFile = tab.Text;
             ThongTinFileTab fileInfo = danhSachTabMo[tab];
 
-            // 1. KIỂM TRA XEM FILE ĐÃ BỊ CHỈNH SỬA (BĂM CẮT) HAY CHƯA
             bool daChinhSua = false;
             try
             {
-                // Lấy thông tin độ dài của file gốc thực tế trên ổ cứng
                 long doDaiFileGoc = new FileInfo(fileInfo.DuongDanFile).Length;
-
-                // Nếu độ dài mảng byte trên RAM hiện tại khác với file gốc -> Đã có chỉnh sửa!
                 if (fileInfo.DuLieuBytes != null && fileInfo.DuLieuBytes.Length != doDaiFileGoc)
                 {
                     daChinhSua = true;
                 }
             }
-            catch (Exception)
-            {
-                // Bọc lót nếu file gốc bị ai đó xóa mất ngoài ổ cứng thì coi như có sửa đổi để cảnh báo người dùng
-                daChinhSua = true;
-            }
+            catch (Exception) { daChinhSua = true; }
 
-            // 2. NẾU ĐÃ CÓ CHỈNH SỬA -> KÍCH HOẠT QUY TRÌNH HỎI LƯU BIÊN BẢN 3 TẦNG
             if (daChinhSua)
             {
-                // TẦNG 1: Hỏi xác nhận muốn đóng Tab file này hay không
                 DialogResult confirmDong = MessageBox.Show(
-                    $"Bạn có chắc chắn muốn tắt file '{tenFile}' không?",
-                    "Xác nhận đóng Tab",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question
+                    $"ファイル'{tenFile}' を閉じてもよろしいですか？",
+                    "タブを閉じる確認", MessageBoxButtons.YesNo, MessageBoxIcon.Question
                 );
 
-                if (confirmDong == DialogResult.No) return; // Người dùng bấm No -> Hủy, giữ nguyên Tab
+                if (confirmDong == DialogResult.No)
+                {
+                    GhiLogOutput($"ファイルタブ'{tenFile}', を維持し、クローズ処理をキャンセルしました。");
+                    return;
+                }
 
-                // TẦNG 2: Hỏi người dùng có muốn LƯU lại dữ liệu (đã băm cắt ngắn) trước khi tắt không
                 DialogResult confirmLuu = MessageBox.Show(
-                    $"File '{tenFile}' ĐÃ CÓ THAY ĐỔI DỮ LIỆU!\nBạn có muốn LƯU lại thay đổi trước khi đóng không?",
-                    "Thông báo lưu dữ liệu",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning
+                    $"ファイル '{tenFile}' は変更されています！\n閉じる前に変更内容を保存しますか？",
+                    "データ保存のお知らせ", MessageBoxButtons.YesNo, MessageBoxIcon.Warning
                 );
 
                 if (confirmLuu == DialogResult.Yes)
                 {
-                    // TẦNG 3: Hỏi cách lưu (Yes = Lưu đè file cũ | No = Lưu thành file mới)
-                    DialogResult cachLuu = MessageBox.Show(
-                        "Bấm [YES] để LƯU ĐÈ (Ghi đè file gốc).\nBấm [NO] để LƯU THÀNH FILE MỚI (Save As).",
-                        "Chọn phương thức lưu file",
-                        MessageBoxButtons.YesNoCancel,
-                        MessageBoxIcon.Question
-                    );
+                    DialogResult cachLuu;
+                    using (var hopThoai = new HopThoaiLuuDuyNhatCustom("保存方法の選択", tenFile))
+                    {
+                        hopThoai.ShowDialog(this);
+                        cachLuu = hopThoai.KetQua;
+                    }
 
-                    if (cachLuu == DialogResult.Cancel) return; // Bấm Cancel -> Hủy toàn bộ tiến trình đóng
+                    if (cachLuu == DialogResult.Cancel)
+                    {
+                        GhiLogOutput($"保存方法の選択中に、タブ'{tenFile}' を閉じる処理がキャンセルされました。");
+                        return;
+                    }
 
                     if (cachLuu == DialogResult.Yes)
                     {
-                        // === HƯỚNG 1: LƯU ĐÈ FILE CŨ ===
                         try
                         {
                             File.WriteAllBytes(fileInfo.DuongDanFile, fileInfo.DuLieuBytes);
-                            GhiLogOutput($"[LƯU FILE] Đã lưu đè thành công vào: {fileInfo.DuongDanFile}");
+                            GhiLogOutput($"ファイルを正常に上書き保存しました： {fileInfo.DuongDanFile}");
                         }
                         catch (Exception ex)
                         {
-                            MessageBox.Show($"Lỗi lưu đè file: {ex.Message}", "Lỗi");
+                            MessageBox.Show($"ファイルの上書き保存エラー: {ex.Message}", "エラー");
                             return;
                         }
                     }
                     else if (cachLuu == DialogResult.No)
                     {
-                        // === HƯỚNG 2: LƯU THÀNH FILE MỚI (SAVE AS) ===
                         using (SaveFileDialog sfd = new SaveFileDialog())
                         {
-                            sfd.FileName = "Cắt_" + Path.GetFileName(fileInfo.DuongDanFile);
+                            sfd.FileName = Path.GetFileName(fileInfo.DuongDanFile);
                             sfd.Filter = "Log File|*.bin;*.log;*.txt|All Files|*.*";
 
                             if (sfd.ShowDialog() == DialogResult.OK)
@@ -348,28 +626,37 @@ namespace コマンドデータ成形ツール
                                 try
                                 {
                                     File.WriteAllBytes(sfd.FileName, fileInfo.DuLieuBytes);
-                                    GhiLogOutput($"[SAVE AS] Đã lưu file mới thành công tại: {sfd.FileName}");
+                                    GhiLogOutput($" 新規ファイルの保存に成功しました: {sfd.FileName}");
                                 }
                                 catch (Exception ex)
                                 {
-                                    MessageBox.Show($"Lỗi Save As file: {ex.Message}", "Lỗi");
+                                    MessageBox.Show($"ファイル保存エラー：{ex.Message}", "エラー");
                                     return;
                                 }
                             }
                             else
                             {
+                                GhiLogOutput($"タブのクローズ処理を中断しました。");
                                 return;
                             }
                         }
                     }
                 }
+                else
+                {
+                    GhiLogOutput($"ァイルの変更内容を保存しない'{tenFile}'.");
+                }
             }
-           
-            // THỰC HIỆN XÓA TAB VÀ GIẢI PHÓNG RAM
+
+            if (listBox1 != null)
+            {
+                listBox1.Items.Remove(tenFile);
+            }
+
             string duongDanGoc = fileInfo.DuongDanFile;
             danhSachTabMo.Remove(tab);
             tabControlFiles.TabPages.Remove(tab);
-            GhiLogOutput($"Đã đóng tab file {duongDanGoc}");
+            GhiLogOutput($"ファイルタブを完全に閉じました： {duongDanGoc}");
         }
 
         private void CapNhatDuLieuLenListView(ListView lv, byte[] bytesToDisplay)
@@ -419,6 +706,43 @@ namespace コマンドデータ成形ツール
             rtbOutput.ScrollToCaret();
         }
 
+        private void GhiLogDieuHuong(string tenFile, string tuKhoa)
+        {
+            string tenFileMaHoa = tenFile.Replace(" ", "%20");
+            string textHienThi = $"File://{tenFileMaHoa} -> [{tuKhoa}]\n";
+
+            rtbOutput.SelectionColor = System.Drawing.Color.Cyan;
+            rtbOutput.AppendText(textHienThi);
+            rtbOutput.SelectionColor = rtbOutput.ForeColor;
+            rtbOutput.ScrollToCaret();
+        }
+
+        private void rtbOutput_LinkClicked(object sender, LinkClickedEventArgs e)
+        {
+            try
+            {
+                string linkText = e.LinkText;
+                if (!linkText.StartsWith("File://", StringComparison.OrdinalIgnoreCase)) return;
+
+                string tenFileCanPing = linkText.Substring(7).Trim();
+                if (tenFileCanPing.Contains(" "))
+                {
+                    tenFileCanPing = tenFileCanPing.Split(' ')[0].Trim();
+                }
+                tenFileCanPing = tenFileCanPing.Replace("%20", " ");
+
+                foreach (TabPage tab in tabControlFiles.TabPages)
+                {
+                    if (tab.Text.Equals(tenFileCanPing, StringComparison.OrdinalIgnoreCase))
+                    {
+                        tabControlFiles.SelectedTab = tab;
+                        return;
+                    }
+                }
+            }
+            catch (Exception) { }
+        }
+
         private void tabControlFiles_DrawItem(object sender, DrawItemEventArgs e)
         {
             try
@@ -437,7 +761,6 @@ namespace コマンドデータ成形ツール
 
                 System.Drawing.Font fontTab = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Regular);
                 e.Graphics.DrawString(tab.Text, fontTab, System.Drawing.Brushes.Black, tabRect.X + 5, tabRect.Y + 4);
-
                 e.Graphics.DrawString("X", fontTab, System.Drawing.Brushes.Red, tabRect.Right - 18, tabRect.Y + 4);
             }
             catch (Exception) { }
@@ -452,10 +775,125 @@ namespace コマンドデータ成形ツール
 
                 if (xRect.Contains(e.Location))
                 {
-                    XửLýTắtTab(tabControlFiles.TabPages[i]);
+                    XuLyTatTab(tabControlFiles.TabPages[i]);
                     break;
                 }
             }
+        }
+
+        private void textBox1_TextChanged(object sender, EventArgs e)
+        {
+
+        }
+    }
+
+    public class HopThoaiLuuDuyNhatCustom : Form
+    {
+        public DialogResult KetQua { get; private set; } = DialogResult.Cancel;
+
+        public HopThoaiLuuDuyNhatCustom(string tieuDe, string tenFile)
+        {
+            this.Text = tieuDe;
+            this.Size = new System.Drawing.Size(420, 150);
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+
+            Label lblNoiDung = new Label();
+            lblNoiDung.Text = $"ファイル'{tenFile}' をどのような方法で保存しますか？";
+            lblNoiDung.Location = new System.Drawing.Point(20, 20);
+            lblNoiDung.Size = new System.Drawing.Size(380, 40);
+            lblNoiDung.Font = new System.Drawing.Font("Segoe UI", 10F);
+            this.Controls.Add(lblNoiDung);
+
+            Button btnLuuDe = new Button();
+            btnLuuDe.Text = "上書き保存";
+            btnLuuDe.Location = new System.Drawing.Point(20, 70);
+            btnLuuDe.Size = new System.Drawing.Size(100, 32);
+            btnLuuDe.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
+            btnLuuDe.Click += (s, e) => { KetQua = DialogResult.Yes; this.Close(); };
+            this.Controls.Add(btnLuuDe);
+
+            Button btnLuuMoi = new Button();
+            btnLuuMoi.Text = "新規保存";
+            btnLuuMoi.Location = new System.Drawing.Point(135, 70);
+            btnLuuMoi.Size = new System.Drawing.Size(130, 32);
+            btnLuuMoi.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
+            btnLuuMoi.Click += (s, e) => { KetQua = DialogResult.No; this.Close(); };
+            this.Controls.Add(btnLuuMoi);
+
+            Button btnHuy = new Button();
+            btnHuy.Text = "キャンセル";
+            btnHuy.Location = new System.Drawing.Point(280, 70);
+            btnHuy.Size = new System.Drawing.Size(100, 32);
+            btnHuy.Font = new System.Drawing.Font("Segoe UI", 9.5F);
+            btnHuy.Click += (s, e) => { KetQua = DialogResult.Cancel; this.Close(); };
+            this.Controls.Add(btnHuy);
+        }
+    }
+
+    public class HopThoaiChonFileLuuCustom : Form
+    {
+        private CheckedListBox chkListFiles;
+        private List<TabPage> _danhSachTabGoc;
+        public List<TabPage> DanhSachTabDuocChon { get; private set; } = new List<TabPage>();
+
+        public HopThoaiChonFileLuuCustom(List<TabPage> danhSachTabDaSua)
+        {
+            this._danhSachTabGoc = danhSachTabDaSua;
+
+            this.Text = "保存するファイル一覧 of 確認";
+            this.Size = new System.Drawing.Size(480, 340);
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+
+            Label lblHuongDan = new Label();
+            lblHuongDan.Text = $"{danhSachTabDaSua.Count} 件 of ファイルが変更されています。\r\n処理したいファイルにチェックを入れてください。";
+            lblHuongDan.Location = new System.Drawing.Point(15, 15);
+            lblHuongDan.Size = new System.Drawing.Size(430, 35);
+            lblHuongDan.Font = new System.Drawing.Font("Segoe UI", 9.5F);
+            this.Controls.Add(lblHuongDan);
+
+            chkListFiles = new CheckedListBox();
+            chkListFiles.Location = new System.Drawing.Point(15, 65);
+            chkListFiles.Size = new System.Drawing.Size(435, 180);
+            chkListFiles.Font = new System.Drawing.Font("Segoe UI", 10F);
+            chkListFiles.CheckOnClick = true;
+
+            foreach (TabPage tab in danhSachTabDaSua)
+            {
+                chkListFiles.Items.Add(tab.Text, true);
+            }
+            this.Controls.Add(chkListFiles);
+
+            Button btnXacNhan = new Button();
+            btnXacNhan.Text = "確認";
+            btnXacNhan.Location = new System.Drawing.Point(190, 255);
+            btnXacNhan.Size = new System.Drawing.Size(120, 32);
+            btnXacNhan.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
+            btnXacNhan.Click += (s, e) => {
+                for (int i = 0; i < chkListFiles.Items.Count; i++)
+                {
+                    if (chkListFiles.GetItemChecked(i))
+                    {
+                        DanhSachTabDuocChon.Add(_danhSachTabGoc[i]);
+                    }
+                }
+                this.DialogResult = DialogResult.OK;
+                this.Close();
+            };
+            this.Controls.Add(btnXacNhan);
+
+            Button btnHuyBo = new Button();
+            btnHuyBo.Text = "キャンセル";
+            btnHuyBo.Location = new System.Drawing.Point(330, 255);
+            btnHuyBo.Size = new System.Drawing.Size(120, 32);
+            btnHuyBo.Font = new System.Drawing.Font("Segoe UI", 9.5F);
+            btnHuyBo.Click += (s, e) => { this.DialogResult = DialogResult.Cancel; this.Close(); };
+            this.Controls.Add(btnHuyBo);
         }
     }
 }
