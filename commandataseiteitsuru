@@ -1,0 +1,961 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Windows.Forms;
+
+namespace CommandDataShapingTool
+{
+    public partial class Form1 : Form
+    {
+        private class FileTabInfo
+        {
+            public string FilePath { get; set; }
+            public byte[] FileBytes { get; set; }
+            public byte[] OriginalFileBytes { get; set; }
+            public ListView DisplayGrid { get; set; }
+        }
+
+        private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
+
+        public Form1()
+        {
+            InitializeComponent();
+            WindowState = FormWindowState.Maximized;
+
+            tabControlFiles.DrawMode = TabDrawMode.OwnerDrawFixed;
+            tabControlFiles.ItemSize = new System.Drawing.Size(150, 22);
+            tabControlFiles.SizeMode = TabSizeMode.Fixed;
+
+            tabControlFiles.DrawItem += new DrawItemEventHandler(TabControlFiles_DrawItem);
+            tabControlFiles.MouseDown += new MouseEventHandler(TabControlFiles_MouseDown);
+
+            if (fileListBox != null)
+            {
+                fileListBox.SelectedIndexChanged += new EventHandler(FileListBox_SelectedIndexChanged);
+            }
+
+            splitMainHorizontal.Panel1MinSize = 80;
+            splitMainHorizontal.Panel2MinSize = 80;
+            splitMainHorizontal.IsSplitterFixed = false;
+
+            splitTopVertical.BackColor = System.Drawing.Color.LightGray;
+            splitTopVertical.Panel1MinSize = 50;
+            splitTopVertical.Panel2MinSize = 100;
+            splitTopVertical.IsSplitterFixed = false;
+            searchTextBox.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            openButton.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            saveButton.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            // ===================================================================
+            // DYNAMIC UI & EVENT BINDING: TỰ CODE VÀ ĐẤU DÂY MENU CHUẨN CHO NÚT OPEN
+            // ===================================================================
+            ContextMenuStrip openDropDownMenu = new ContextMenuStrip();
+
+            // Lựa chọn 1: Mở File thông thường
+            ToolStripMenuItem itemSelectFiles = new ToolStripMenuItem("Select Files");
+            itemSelectFiles.Click += new EventHandler(SelectFilesMenuItem_Click);
+
+            // Lựa chọn 2: Mở trọn gói Folder (Bấm bên ngoài ăn luôn - Hiện đại phẳng lỳ)
+            ToolStripMenuItem itemSelectFolder = new ToolStripMenuItem("Select Folder");
+            itemSelectFolder.Click += new EventHandler(SelectFolderMenuItem_Click); // Đấu dây chuẩn xác ở đây!
+
+            // Nạp các item vào menu xổ xuống
+            openDropDownMenu.Items.Add(itemSelectFiles);
+            openDropDownMenu.Items.Add(itemSelectFolder);
+
+            // Gán menu có dây nối này vào thuộc tính ContextMenuStrip của nút openButton
+            openButton.ContextMenuStrip = openDropDownMenu;
+        }
+
+        private void AddFileToTab(string filePath)
+        {
+            foreach (var item in openedTabs.Values)
+            {
+                if (item.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase)) return;
+            }
+
+            byte[] fileBytes = File.ReadAllBytes(filePath);
+            string fileName = Path.GetFileName(filePath);
+            TabPage newTab = new TabPage(fileName);
+
+            ListView newListView = new ListView();
+            newListView.Dock = DockStyle.Fill;
+            newListView.View = View.Details;
+            newListView.Font = new System.Drawing.Font("Consolas", 10F);
+            newTab.Controls.Add(newListView);
+
+            FileTabInfo tabInfo = new FileTabInfo
+            {
+                FilePath = filePath,
+                FileBytes = fileBytes,
+                OriginalFileBytes = (byte[])fileBytes.Clone(),
+                DisplayGrid = newListView
+            };
+            openedTabs.Add(newTab, tabInfo);
+
+            tabControlFiles.TabPages.Add(newTab);
+            tabControlFiles.SelectedTab = newTab;
+
+            if (fileListBox != null)
+            {
+                fileListBox.Items.Add(fileName);
+            }
+
+            UpdateDataToListView(newListView, fileBytes);
+            WriteOutputLog($"Successfully opened file: {fileName}");
+        }
+
+        private void FileListBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (fileListBox.SelectedItem == null) return;
+            string selectedFileName = fileListBox.SelectedItem.ToString();
+
+            foreach (TabPage tab in tabControlFiles.TabPages)
+            {
+                if (tab.Text == selectedFileName)
+                {
+                    tabControlFiles.SelectedTab = tab;
+                    break;
+                }
+            }
+        }
+
+        private void OpenButton_Click(object sender, EventArgs e)
+        {
+            if (openButton.ContextMenuStrip != null)
+            {
+                openButton.ContextMenuStrip.Show(openButton, new System.Drawing.Point(0, openButton.Height));
+            }
+            else
+            {
+                WriteOutputLog("Open dropdown triggered. Please select an option from the attached menu context.");
+            }
+        }
+
+        private void SelectFilesMenuItem_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Filter = "Log File|*.bin;*.log;*.txt|All Files|*.*";
+                ofd.Multiselect = true;
+
+                if (ofd.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        foreach (string file in ofd.FileNames)
+                        {
+                            AddFileToTab(file);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Error opening file list: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private void SelectFolderMenuItem_Click(object sender, EventArgs e)
+        {
+            NativeFolderBrowserDialog dialog = new NativeFolderBrowserDialog();
+            dialog.Title = "Select Target Folder";
+
+            if (dialog.ShowDialog(this.Handle))
+            {
+                try
+                {
+                    string targetDirectory = dialog.SelectedPath;
+
+                    if (!string.IsNullOrEmpty(targetDirectory) && Directory.Exists(targetDirectory))
+                    {
+                        // Quét đệ quy càn quét sạch file con .bin, .log, .txt từ folder cha
+                        string[] discoveredFiles = Directory.GetFiles(targetDirectory, "*.*", SearchOption.AllDirectories);
+                        int loadedCount = 0;
+
+                        foreach (string file in discoveredFiles)
+                        {
+                            string ext = Path.GetExtension(file).ToLower();
+                            if (ext == ".bin" || ext == ".log" || ext == ".txt")
+                            {
+                                AddFileToTab(file);
+                                loadedCount++;
+                            }
+                        }
+
+                        WriteOutputLog($"[Directory Deep Scan] Successfully mounted {loadedCount} child files from hierarchy tree of '{Path.GetFileName(targetDirectory)}'.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Recursive folder scan aborted: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void FindButton_Click(object sender, EventArgs e)
+        {
+            string rawInput = searchTextBox.Text.Trim();
+
+            if (string.IsNullOrEmpty(rawInput)) return;
+            if (tabControlFiles.TabPages.Count == 0)
+            {
+                WriteOutputLog("Please open at least one file before searching!");
+                return;
+            }
+
+            string cleanedHexInput = rawInput.ToUpper().Replace(" ", "");
+
+            if (rawInput.Contains(".."))
+            {
+                string[] parts = rawInput.Split(new string[] { ".." }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 2)
+                {
+                    string startByte = parts[0].Trim().ToUpper();
+                    string endByte = parts[1].Trim().ToUpper();
+
+                    if (Regex.IsMatch(startByte, @"^[0-9A-F]{2}$") && Regex.IsMatch(endByte, @"^[0-9A-F]{2}$"))
+                    {
+                        string hexPattern = $@"({startByte})( [0-9A-F]{{2}})* ({endByte})";
+                        SearchOnHexColumn(hexPattern, rawInput);
+                        return;
+                    }
+                }
+            }
+
+            if (Regex.IsMatch(cleanedHexInput, @"^[0-9A-F]+$") && cleanedHexInput.Length % 2 == 0)
+            {
+                int targetSize = cleanedHexInput.Length / 2;
+                byte[] targetBytes = new byte[targetSize];
+                for (int i = 0; i < targetSize; i++)
+                {
+                    targetBytes[i] = Convert.ToByte(cleanedHexInput.Substring(i * 2, 2), 16);
+                }
+
+                WriteOutputLog($"\n--- Hex Scan Started: [{rawInput.ToUpper()}] ---");
+                int matchedHexFiles = 0;
+
+                foreach (TabPage tab in tabControlFiles.TabPages)
+                {
+                    if (!openedTabs.ContainsKey(tab)) continue;
+
+                    FileTabInfo fileInfo = openedTabs[tab];
+                    byte[] sourceBytes = fileInfo.OriginalFileBytes ?? fileInfo.FileBytes;
+                    if (sourceBytes == null || sourceBytes.Length < targetBytes.Length) continue;
+
+                    string fileName = Path.GetFileName(fileInfo.FilePath);
+                    int matchIndex = -1;
+
+                    for (int i = sourceBytes.Length - targetBytes.Length; i >= 0; i--)
+                    {
+                        bool isMatch = true;
+                        for (int j = 0; j < targetBytes.Length; j++)
+                        {
+                            if (sourceBytes[i + j] != targetBytes[j])
+                            {
+                                isMatch = false;
+                                break;
+                            }
+                        }
+                        if (isMatch) { matchIndex = i; break; }
+                    }
+
+                    if (matchIndex != -1)
+                    {
+                        int endCutIndex = matchIndex + targetBytes.Length;
+                        byte[] temporaryBytes = new byte[endCutIndex];
+                        Array.Copy(sourceBytes, 0, temporaryBytes, 0, endCutIndex);
+                        fileInfo.FileBytes = temporaryBytes;
+
+                        UpdateDataToListView(fileInfo.DisplayGrid, fileInfo.FileBytes);
+
+                        ListView lv = fileInfo.DisplayGrid;
+                        if (lv != null && lv.Items.Count > 0)
+                        {
+                            int rowIndex = matchIndex / 16;
+                            if (rowIndex >= lv.Items.Count) rowIndex = lv.Items.Count - 1;
+                            if (rowIndex < 0) rowIndex = 0;
+
+                            foreach (ListViewItem row in lv.Items) row.BackColor = System.Drawing.SystemColors.Window;
+
+                            lv.Items[rowIndex].Selected = true;
+                            lv.Items[rowIndex].Focused = true;
+                            lv.Items[rowIndex].BackColor = System.Drawing.Color.LightGreen;
+                            lv.Items[rowIndex].EnsureVisible();
+                        }
+
+                        WriteNavigationLog(fileName, rawInput.ToUpper());
+                        matchedHexFiles++;
+                    }
+                }
+                WriteOutputLog($"Search Completed: Found matches in {matchedHexFiles} files.\n");
+            }
+            else
+            {
+                SearchByRegexEngine(rawInput);
+            }
+        }
+
+        private void SearchOnHexColumn(string hexPattern, string originalExpression)
+        {
+            Regex regex = new Regex(hexPattern, RegexOptions.IgnoreCase);
+            WriteOutputLog($"\n--- Hex Distance Scan Started: [{originalExpression}] ---");
+            int matchedFiles = 0;
+
+            foreach (TabPage tab in tabControlFiles.TabPages)
+            {
+                if (!openedTabs.ContainsKey(tab)) continue;
+
+                FileTabInfo fileInfo = openedTabs[tab];
+                ListView lv = fileInfo.DisplayGrid;
+                if (lv == null || lv.Items.Count == 0) continue;
+
+                bool hasMatch = false;
+                int firstMatchedRow = -1;
+                string matchedString = "";
+
+                foreach (ListViewItem row in lv.Items) row.BackColor = System.Drawing.SystemColors.Window;
+
+                for (int rowIndex = 0; rowIndex < lv.Items.Count; rowIndex++)
+                {
+                    if (lv.Items[rowIndex].SubItems.Count > 1)
+                    {
+                        string hexColumnText = lv.Items[rowIndex].SubItems[1].Text;
+                        Match m = regex.Match(hexColumnText);
+
+                        if (m.Success)
+                        {
+                            hasMatch = true;
+                            lv.Items[rowIndex].Selected = true;
+                            lv.Items[rowIndex].Focused = true;
+                            lv.Items[rowIndex].BackColor = System.Drawing.Color.LightGreen;
+
+                            if (firstMatchedRow == -1)
+                            {
+                                firstMatchedRow = rowIndex;
+                                matchedString = m.Value;
+                            }
+                        }
+                    }
+                }
+
+                if (hasMatch)
+                {
+                    matchedFiles++;
+                    string fileName = Path.GetFileName(fileInfo.FilePath);
+                    if (firstMatchedRow != -1) lv.Items[firstMatchedRow].EnsureVisible();
+                    WriteNavigationLog(fileName, matchedString);
+                }
+            }
+            WriteOutputLog($"Search Completed: Found matches in {matchedFiles} files.\n");
+        }
+
+        private void SearchByRegexEngine(string pattern)
+        {
+            Regex regex;
+            try
+            {
+                regex = new Regex(pattern, RegexOptions.IgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                WriteOutputLog("Regex Syntax Error: " + ex.Message);
+                return;
+            }
+
+            WriteOutputLog($"\n--- Text Regex Scan Started: [{pattern}] ---");
+            int matchedFiles = 0;
+
+            foreach (TabPage tab in tabControlFiles.TabPages)
+            {
+                if (!openedTabs.ContainsKey(tab)) continue;
+
+                FileTabInfo fileInfo = openedTabs[tab];
+                byte[] sourceBytes = fileInfo.OriginalFileBytes ?? fileInfo.FileBytes;
+                if (sourceBytes == null) continue;
+
+                ListView lv = fileInfo.DisplayGrid;
+                if (lv == null || lv.Items.Count == 0) continue;
+
+                string textContent = Encoding.GetEncoding("Shift-JIS").GetString(sourceBytes);
+                Match m = regex.Match(textContent);
+
+                if (m.Success)
+                {
+                    string fileName = Path.GetFileName(fileInfo.FilePath);
+
+                    int charIndex = m.Index;
+                    byte[] bytesBeforeMatch = Encoding.GetEncoding("Shift-JIS").GetBytes(textContent.Substring(0, charIndex));
+                    int byteMatchIndex = bytesBeforeMatch.Length;
+
+                    int matchedByteCount = Encoding.GetEncoding("Shift-JIS").GetByteCount(m.Value);
+                    int endCutIndex = byteMatchIndex + matchedByteCount;
+
+                    byte[] temporaryBytes = new byte[endCutIndex];
+                    Array.Copy(sourceBytes, 0, temporaryBytes, 0, endCutIndex);
+                    fileInfo.FileBytes = temporaryBytes;
+
+                    UpdateDataToListView(lv, fileInfo.FileBytes);
+
+                    foreach (ListViewItem row in lv.Items) row.BackColor = System.Drawing.SystemColors.Window;
+
+                    int rowIndex = byteMatchIndex / 16;
+                    if (rowIndex >= lv.Items.Count) rowIndex = lv.Items.Count - 1;
+                    if (rowIndex < 0) rowIndex = 0;
+
+                    lv.Items[rowIndex].Selected = true;
+                    lv.Items[rowIndex].Focused = true;
+                    lv.Items[rowIndex].BackColor = System.Drawing.Color.LightGreen;
+                    lv.Items[rowIndex].EnsureVisible();
+
+                    WriteNavigationLog(fileName, m.Value);
+                    matchedFiles++;
+                }
+            }
+            WriteOutputLog($"Regex Scan Completed: Found matches in {matchedFiles} files.\n");
+        }
+
+        private void SaveButton_Click(object sender, EventArgs e)
+        {
+            if (tabControlFiles.TabPages.Count == 0)
+            {
+                WriteOutputLog("No active tabs available to save!");
+                return;
+            }
+
+            List<TabPage> modifiedTabs = new List<TabPage>();
+            foreach (TabPage tab in tabControlFiles.TabPages)
+            {
+                if (!openedTabs.ContainsKey(tab)) continue;
+                FileTabInfo fileInfo = openedTabs[tab];
+
+                bool isModified = false;
+                try
+                {
+                    long originalLength = new FileInfo(fileInfo.FilePath).Length;
+                    if (fileInfo.FileBytes != null && fileInfo.FileBytes.Length != originalLength)
+                    {
+                        isModified = true;
+                    }
+                }
+                catch (Exception) { isModified = true; }
+
+                if (isModified) modifiedTabs.Add(tab);
+            }
+
+            if (modifiedTabs.Count == 0)
+            {
+                MessageBox.Show("No unsaved modifications were detected.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                WriteOutputLog("Save process halted: Data is up to date.");
+                return;
+            }
+
+            WriteOutputLog($"Detected {modifiedTabs.Count} modified file(s). Displaying file selection prompt...");
+            List<TabPage> selectedTabsToSave = new List<TabPage>();
+            using (var saveSelectionDialog = new SaveSelectionCustomDialog(modifiedTabs))
+            {
+                if (saveSelectionDialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    selectedTabsToSave = saveSelectionDialog.SelectedTabs;
+                }
+                else
+                {
+                    WriteOutputLog("Save operation canceled by user.");
+                    return;
+                }
+            }
+
+            if (selectedTabsToSave.Count == 0)
+            {
+                MessageBox.Show("No files were selected for processing.", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            DialogResult saveMethod;
+            using (var methodConfirmDialog = new SaveMethodConfirmCustomDialog("Select Save Mode", "Save Confirmation"))
+            {
+                methodConfirmDialog.SetMessageLabel($"Do you want to save changes to the selected {selectedTabsToSave.Count} file(s) or save them as new files?");
+                methodConfirmDialog.ShowDialog(this);
+                saveMethod = methodConfirmDialog.Result;
+            }
+
+            if (saveMethod == DialogResult.Cancel)
+            {
+                WriteOutputLog("Save procedure aborted.");
+                return;
+            }
+
+            int successCount = 0;
+            List<string> successFileNames = new List<string>();
+
+            if (saveMethod == DialogResult.Yes)
+            {
+                WriteOutputLog($"Executing batch overwrite for {selectedTabsToSave.Count} file(s)...");
+                foreach (TabPage tab in selectedTabsToSave)
+                {
+                    FileTabInfo fileInfo = openedTabs[tab];
+                    try
+                    {
+                        File.WriteAllBytes(fileInfo.FilePath, fileInfo.FileBytes);
+                        WriteOutputLog($"Overwrote target file successfully: {fileInfo.FilePath}");
+                        successFileNames.Add(Path.GetFileName(fileInfo.FilePath));
+                        successCount++;
+                    }
+                    catch (Exception ex) { WriteOutputLog($"File write exception: {ex.Message}"); }
+                }
+            }
+            else if (saveMethod == DialogResult.No)
+            {
+                WriteOutputLog($"Launching individual export pathways for {selectedTabsToSave.Count} file(s)...");
+                foreach (TabPage tab in selectedTabsToSave)
+                {
+                    FileTabInfo fileInfo = openedTabs[tab];
+                    string originalName = Path.GetFileName(fileInfo.FilePath);
+
+                    using (SaveFileDialog sfd = new SaveFileDialog())
+                    {
+                        sfd.Title = $"Export New Target: {originalName}";
+                        sfd.FileName = originalName;
+                        sfd.Filter = "Log File|*.bin;*.log;*.txt|All Files|*.*";
+
+                        if (sfd.ShowDialog() == DialogResult.OK)
+                        {
+                            try
+                            {
+                                File.WriteAllBytes(sfd.FileName, fileInfo.FileBytes);
+                                WriteOutputLog($"Export file created successfully: {sfd.FileName}");
+                                successFileNames.Add(Path.GetFileName(sfd.FileName) + " (New)");
+                                successCount++;
+                            }
+                            catch (Exception ex) { WriteOutputLog($"Export operation failure: {ex.Message}"); }
+                        }
+                    }
+                }
+            }
+
+            if (successCount > 0)
+            {
+                string summaryList = string.Join("\n - ", successFileNames);
+                MessageBox.Show(
+                    $"Successfully updated {successCount} item(s).\n\nDetailed Manifest:\n - {summaryList}",
+                    "Success", MessageBoxButtons.OK, MessageBoxIcon.Information
+                );
+            }
+        }
+
+        private void CloseTabInfo(TabPage tab)
+        {
+            if (tab == null || !openedTabs.ContainsKey(tab)) return;
+
+            string fileName = tab.Text;
+            FileTabInfo fileInfo = openedTabs[tab];
+
+            bool isModified = false;
+            try
+            {
+                long originalLength = new FileInfo(fileInfo.FilePath).Length;
+                if (fileInfo.FileBytes != null && fileInfo.FileBytes.Length != originalLength)
+                {
+                    isModified = true;
+                }
+            }
+            catch (Exception) { isModified = true; }
+
+            if (isModified)
+            {
+                DialogResult closeConfirm = MessageBox.Show(
+                    $"Are you sure you want to close the file tab '{fileName}'?",
+                    "Confirm Closing Tab", MessageBoxButtons.YesNo, MessageBoxIcon.Question
+                );
+
+                if (closeConfirm == DialogResult.No)
+                {
+                    WriteOutputLog($"Aborted close command. Maintained tab reference: '{fileName}'");
+                    return;
+                }
+
+                DialogResult saveConfirm = MessageBox.Show(
+                    $"Unsaved changes detected on '{fileName}'!\nWould you like to preserve modifications before exit?",
+                    "Pending Modifications Detected", MessageBoxButtons.YesNo, MessageBoxIcon.Warning
+                );
+
+                if (saveConfirm == DialogResult.Yes)
+                {
+                    DialogResult saveMethod;
+                    using (var methodDialog = new SaveMethodConfirmCustomDialog("Save Preference Profile", fileName))
+                    {
+                        methodDialog.ShowDialog(this);
+                        saveMethod = methodDialog.Result;
+                    }
+
+                    if (saveMethod == DialogResult.Cancel)
+                    {
+                        WriteOutputLog($"Interrupted disposal routine during save method setup for '{fileName}'.");
+                        return;
+                    }
+
+                    if (saveMethod == DialogResult.Yes)
+                    {
+                        try
+                        {
+                            File.WriteAllBytes(fileInfo.FilePath, fileInfo.FileBytes);
+                            WriteOutputLog($"Target modifications written over original address: {fileInfo.FilePath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show($"File save fault encountered: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            return;
+                        }
+                    }
+                    else if (saveMethod == DialogResult.No)
+                    {
+                        using (SaveFileDialog sfd = new SaveFileDialog())
+                        {
+                            sfd.FileName = Path.GetFileName(fileInfo.FilePath);
+                            sfd.Filter = "Log File|*.bin;*.log;*.txt|All Files|*.*";
+
+                            if (sfd.ShowDialog() == DialogResult.OK)
+                            {
+                                try
+                                {
+                                    File.WriteAllBytes(sfd.FileName, fileInfo.FileBytes);
+                                    WriteOutputLog($"Isolated clean copy exported successfully: {sfd.FileName}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    MessageBox.Show($"Export operation failure: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                    return;
+                                }
+                            }
+                            else
+                            {
+                                WriteOutputLog($"Canceled tab teardown cycle.");
+                                return;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    WriteOutputLog($"Discarded all working track adjustments for '{fileName}'.");
+                }
+            }
+
+            if (fileListBox != null)
+            {
+                fileListBox.Items.Remove(fileName);
+            }
+
+            string originalPath = fileInfo.FilePath;
+            openedTabs.Remove(tab);
+            tabControlFiles.TabPages.Remove(tab);
+            WriteOutputLog($"Tab disposed from working space. Closed track: {originalPath}");
+        }
+
+        private void UpdateDataToListView(ListView lv, byte[] bytesToDisplay)
+        {
+            if (lv == null) return;
+            lv.BeginUpdate();
+            lv.Items.Clear();
+            lv.Columns.Clear();
+            lv.GridLines = true;
+            lv.FullRowSelect = true;
+
+            lv.Columns.Add("Offset", 100);
+            lv.Columns.Add("Hex Data", 380);
+            lv.Columns.Add("Decoded Text", 200);
+
+            System.Text.Encoding encodingNhat = System.Text.Encoding.GetEncoding("Shift-JIS");
+            int bytesPerLine = 16;
+
+            for (int i = 0; i < bytesToDisplay.Length; i += bytesPerLine)
+            {
+                if (lv.Items.Count >= 5000) break;
+                string offsetStr = i.ToString("x8").ToUpper();
+                int remainingBytes = Math.Min(bytesPerLine, bytesToDisplay.Length - i);
+                byte[] lineBytes = new byte[remainingBytes];
+                Array.Copy(bytesToDisplay, i, lineBytes, 0, remainingBytes);
+
+                List<string> hexChunks = new List<string>();
+                foreach (byte b in lineBytes) hexChunks.Add(b.ToString("x2").ToUpper());
+                string hexStr = string.Join(" ", hexChunks);
+
+                string rawText = encodingNhat.GetString(lineBytes);
+                string cleanText = "";
+                foreach (char c in rawText) cleanText += (c != '\0' && !char.IsControl(c)) ? c : '.';
+
+                ListViewItem item = new ListViewItem(offsetStr);
+                item.SubItems.Add(hexStr);
+                item.SubItems.Add(cleanText);
+                lv.Items.Add(item);
+            }
+            lv.EndUpdate();
+        }
+
+        private void WriteOutputLog(string content)
+        {
+            rtbOutput.AppendText(content + "\n");
+            rtbOutput.SelectionStart = rtbOutput.Text.Length;
+            rtbOutput.ScrollToCaret();
+        }
+
+        private void WriteNavigationLog(string fileName, string keyword)
+        {
+            string encodedFileName = fileName.Replace(" ", "%20");
+            string logText = $"File://{encodedFileName} -> [{keyword}]\n";
+
+            rtbOutput.SelectionColor = System.Drawing.Color.Cyan;
+            rtbOutput.AppendText(logText);
+            rtbOutput.SelectionColor = rtbOutput.ForeColor;
+            rtbOutput.ScrollToCaret();
+        }
+
+        private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e)
+        {
+            try
+            {
+                string linkText = e.LinkText;
+                if (!linkText.StartsWith("File://", StringComparison.OrdinalIgnoreCase)) return;
+
+                string targetFile = linkText.Substring(7).Trim();
+                if (targetFile.Contains(" "))
+                {
+                    targetFile = targetFile.Split(' ')[0].Trim();
+                }
+                targetFile = targetFile.Replace("%20", " ");
+
+                foreach (TabPage tab in tabControlFiles.TabPages)
+                {
+                    if (tab.Text.Equals(targetFile, StringComparison.OrdinalIgnoreCase))
+                    {
+                        tabControlFiles.SelectedTab = tab;
+                        return;
+                    }
+                }
+            }
+            catch (Exception) { }
+        }
+
+        private void TabControlFiles_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            try
+            {
+                TabPage tab = tabControlFiles.TabPages[e.Index];
+                System.Drawing.Rectangle tabRect = tabControlFiles.GetTabRect(e.Index);
+
+                if (e.State == DrawItemState.Selected)
+                {
+                    e.Graphics.FillRectangle(System.Drawing.Brushes.White, tabRect);
+                }
+                else
+                {
+                    e.Graphics.FillRectangle(System.Drawing.Brushes.LightGray, tabRect);
+                }
+
+                System.Drawing.Font fontTab = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Regular);
+                e.Graphics.DrawString(tab.Text, fontTab, System.Drawing.Brushes.Black, tabRect.X + 5, tabRect.Y + 4);
+                e.Graphics.DrawString("X", fontTab, System.Drawing.Brushes.Red, tabRect.Right - 18, tabRect.Y + 4);
+            }
+            catch (Exception) { }
+        }
+
+        private void TabControlFiles_MouseDown(object sender, MouseEventArgs e)
+        {
+            for (int i = 0; i < tabControlFiles.TabCount; i++)
+            {
+                System.Drawing.Rectangle tabRect = tabControlFiles.GetTabRect(i);
+                System.Drawing.Rectangle xRect = new System.Drawing.Rectangle(tabRect.Right - 20, tabRect.Y, 20, tabRect.Height);
+
+                if (xRect.Contains(e.Location))
+                {
+                    CloseTabInfo(tabControlFiles.TabPages[i]);
+                    break;
+                }
+            }
+        }
+    }
+
+    // =======================================================================
+    // NATIVE COM DIALOG ENGINE: TÁCH ĐỘC LẬP NGOÀI FORM ĐỂ KHÔNG BAO GIỜ BỊ LỖI ĐỎ
+    // =======================================================================
+    public class NativeFolderBrowserDialog
+    {
+        public string Title { get; set; } = "Select Folder";
+        public string SelectedPath { get; private set; } = string.Empty;
+
+        public bool ShowDialog(IntPtr owner)
+        {
+            Guid clsidFileOpenDialog = new Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7");
+            Type fileOpenDialogType = Type.GetTypeFromCLSID(clsidFileOpenDialog);
+            if (fileOpenDialogType == null) return false;
+
+            object dialog = Activator.CreateInstance(fileOpenDialogType);
+            if (dialog == null) return false;
+
+            try
+            {
+                // Cấu hình Options: FOS_PICKFOLDERS (0x00000020) + FOS_FORCEFILESYSTEM (0x00000040)
+                var setOptions = fileOpenDialogType.GetMethod("SetOptions");
+                var getOptions = fileOpenDialogType.GetMethod("GetOptions");
+                if (setOptions != null && getOptions != null)
+                {
+                    uint options = (uint)getOptions.Invoke(dialog, null);
+                    setOptions.Invoke(dialog, new object[] { options | 0x00000020 | 0x00000040 });
+                }
+
+                if (!string.IsNullOrEmpty(Title))
+                {
+                    fileOpenDialogType.GetMethod("SetTitle")?.Invoke(dialog, new object[] { Title });
+                }
+
+                var show = fileOpenDialogType.GetMethod("Show");
+                int? result = (int?)show?.Invoke(dialog, new object[] { owner });
+
+                if (result == 0) // S_OK
+                {
+                    var getResult = fileOpenDialogType.GetMethod("GetResult");
+                    object shellItem = getResult?.Invoke(dialog, null);
+                    if (shellItem != null)
+                    {
+                        var getDisplayName = shellItem.GetType().GetMethod("GetDisplayName");
+                        // 0x80028046 = Absolute physical physical path
+                        SelectedPath = (string)getDisplayName?.Invoke(shellItem, new object[] { (uint)0x80028046 });
+                        return true;
+                    }
+                }
+            }
+            catch (Exception) { }
+            finally
+            {
+                if (System.Runtime.InteropServices.Marshal.IsComObject(dialog))
+                {
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(dialog);
+                }
+            }
+            return false;
+        }
+    }
+
+    // =======================================================================
+    // CUSTOM STORAGE DIALOGS
+    // =======================================================================
+    public class SaveMethodConfirmCustomDialog : Form
+    {
+        public DialogResult Result { get; private set; } = DialogResult.Cancel;
+        private Label lblMessageContent;
+
+        public SaveMethodConfirmCustomDialog(string titleProfile, string targetFileName)
+        {
+            this.Text = "Save Changes";
+            this.Size = new System.Drawing.Size(420, 150);
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+
+            lblMessageContent = new Label();
+            lblMessageContent.Text = $"Do you want to save changes to '{targetFileName}' or save it as a new file?";
+            lblMessageContent.Location = new System.Drawing.Point(20, 20);
+            lblMessageContent.Size = new System.Drawing.Size(380, 40);
+            lblMessageContent.Font = new System.Drawing.Font("Segoe UI", 10F);
+            this.Controls.Add(lblMessageContent);
+
+            Button btnSaveOverwrite = new Button();
+            btnSaveOverwrite.Text = "Save";
+            btnSaveOverwrite.Location = new System.Drawing.Point(20, 70);
+            btnSaveOverwrite.Size = new System.Drawing.Size(100, 32);
+            btnSaveOverwrite.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
+            btnSaveOverwrite.Click += (s, e) => { Result = DialogResult.Yes; this.Close(); };
+            this.Controls.Add(btnSaveOverwrite);
+
+            Button btnSaveAs = new Button();
+            btnSaveAs.Text = "Save As...";
+            btnSaveAs.Location = new System.Drawing.Point(135, 70);
+            btnSaveAs.Size = new System.Drawing.Size(130, 32);
+            btnSaveAs.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
+            btnSaveAs.Click += (s, e) => { Result = DialogResult.No; this.Close(); };
+            this.Controls.Add(btnSaveAs);
+
+            Button btnCancel = new Button();
+            btnCancel.Text = "Cancel";
+            btnCancel.Location = new System.Drawing.Point(280, 70);
+            btnCancel.Size = new System.Drawing.Size(100, 32);
+            btnCancel.Font = new System.Drawing.Font("Segoe UI", 9.5F);
+            btnCancel.Click += (s, e) => { Result = DialogResult.Cancel; this.Close(); };
+            this.Controls.Add(btnCancel);
+        }
+
+        public void SetMessageLabel(string text)
+        {
+            if (lblMessageContent != null) lblMessageContent.Text = text;
+        }
+    }
+
+    public class SaveSelectionCustomDialog : Form
+    {
+        private CheckedListBox chkListFiles;
+        private List<TabPage> baseTabsList;
+        public List<TabPage> SelectedTabs { get; private set; } = new List<TabPage>();
+
+        public SaveSelectionCustomDialog(List<TabPage> modifiedTabsList)
+        {
+            this.baseTabsList = modifiedTabsList;
+
+            this.Text = "Confirm Target Save Manifest";
+            this.Size = new System.Drawing.Size(480, 340);
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+
+            Label lblInstruction = new Label();
+            lblInstruction.Text = "Detected modified element tracks.\nPlease tick select targets you wish to commit for storage update:";
+            lblInstruction.Location = new System.Drawing.Point(15, 15);
+            lblInstruction.Size = new System.Drawing.Size(430, 35);
+            lblInstruction.Font = new System.Drawing.Font("Segoe UI", 9.5F);
+            this.Controls.Add(lblInstruction);
+
+            chkListFiles = new CheckedListBox();
+            chkListFiles.Location = new System.Drawing.Point(15, 65);
+            chkListFiles.Size = new System.Drawing.Size(435, 180);
+            chkListFiles.Font = new System.Drawing.Font("Segoe UI", 10F);
+            chkListFiles.CheckOnClick = true;
+
+            foreach (TabPage tab in modifiedTabsList)
+            {
+                chkListFiles.Items.Add(tab.Text, true);
+            }
+            this.Controls.Add(chkListFiles);
+
+            Button btnConfirm = new Button();
+            btnConfirm.Text = "Confirm";
+            btnConfirm.Location = new System.Drawing.Point(190, 255);
+            btnConfirm.Size = new System.Drawing.Size(120, 32);
+            btnConfirm.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
+            btnConfirm.Click += (s, e) => {
+                for (int i = 0; i < chkListFiles.Items.Count; i++)
+                {
+                    if (chkListFiles.GetItemChecked(i))
+                    {
+                        SelectedTabs.Add(baseTabsList[i]);
+                    }
+                }
+                this.DialogResult = DialogResult.OK;
+                this.Close();
+            };
+            this.Controls.Add(btnConfirm);
+
+            Button btnCancel = new Button();
+            btnCancel.Text = "Cancel";
+            btnCancel.Location = new System.Drawing.Point(330, 255);
+            btnCancel.Size = new System.Drawing.Size(120, 32);
+            btnCancel.Font = new System.Drawing.Font("Segoe UI", 9.5F);
+            btnCancel.Click += (s, e) => { this.DialogResult = DialogResult.Cancel; this.Close(); };
+            this.Controls.Add(btnCancel);
+        }
+    }
+}
