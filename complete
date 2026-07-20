@@ -1,0 +1,716 @@
+using Microsoft.WindowsAPICodePack.Dialogs;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Windows.Forms;
+
+namespace LogFormatter
+{
+    public partial class Form1 : Form
+    {
+        private class FileTabInfo
+        {
+            public string FilePath { get; set; }
+            public long FileLength { get; set; }
+            public ListView DisplayGrid { get; set; }
+            public VScrollBar VirtualScrollBar { get; set; }
+            public List<ListViewItem> RealLines { get; set; }
+            public bool IsShaped { get; set; }
+        }
+
+        private class SearchResultItem
+        {
+            public int LineIndex { get; set; }
+            public string Offset { get; set; }
+            public string HexData { get; set; }
+            public string DecodedText { get; set; }
+            public int MatchIndexInColumn { get; set; }
+            public int ActualMatchLength { get; set; }
+            public bool MatchedInHex { get; set; }
+        }
+
+        private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
+        private const int BYTES_PER_LINE = 16;
+        private const int MAX_DISPLAY_LINES = 50;
+
+        public Form1()
+        {
+            InitializeComponent();
+            this.StartPosition = FormStartPosition.CenterScreen;
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            this.Load += (s, e) => {
+                if (fileListBox != null) fileListBox.Items.Clear();
+                if (tabControlFiles != null) tabControlFiles.TabPages.Clear();
+                openedTabs.Clear();
+
+                if (rtbOutput != null)
+                {
+                    rtbOutput.ReadOnly = true;
+                    rtbOutput.MouseClick += RtbOutput_MouseClick;
+                }
+            };
+        }
+
+        private void AddFileToTab(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+
+            string extensionLower = Path.GetExtension(filePath).ToLower();
+            if (extensionLower != ".log" && extensionLower != ".bin") return;
+
+            foreach (var item in openedTabs.Values)
+            {
+                if (item.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase)) return;
+            }
+
+            FileInfo fi = new FileInfo(filePath);
+            long fileLength = fi.Length;
+            string fileName = fi.Name;
+
+            TabPage newTab = new TabPage(fileName);
+            Panel containerPanel = new Panel() { Dock = DockStyle.Fill };
+
+            ListView newListView = new ListView();
+            newListView.Dock = DockStyle.Fill;
+            newListView.View = View.Details;
+            newListView.Font = new Font("Consolas", 10F);
+            newListView.GridLines = true;
+            newListView.FullRowSelect = true;
+            newListView.Columns.Add("Offset", 100);
+            newListView.Columns.Add("Hex Data", 380);
+            newListView.Columns.Add("Decoded Text", 200);
+
+            List<ListViewItem> allLines = GetAllFileLines(filePath);
+
+            VScrollBar vScroll = new VScrollBar();
+            vScroll.Name = "vScroll";
+            vScroll.Dock = DockStyle.Right;
+            vScroll.Minimum = 0;
+            vScroll.Maximum = Math.Max(0, allLines.Count - MAX_DISPLAY_LINES);
+
+            containerPanel.Controls.Add(newListView);
+            containerPanel.Controls.Add(vScroll);
+            newTab.Controls.Add(containerPanel);
+
+            FileTabInfo tabInfo = new FileTabInfo
+            {
+                FilePath = filePath,
+                FileLength = fileLength,
+                DisplayGrid = newListView,
+                VirtualScrollBar = vScroll,
+                RealLines = allLines,
+                IsShaped = false
+            };
+            openedTabs.Add(newTab, tabInfo);
+
+            newListView.MouseWheel += (s, e) => {
+                if (containerPanel.Controls.ContainsKey("vScroll"))
+                {
+                    VScrollBar sb = (VScrollBar)containerPanel.Controls["vScroll"];
+                    int newValue = sb.Value - (e.Delta / 120);
+                    if (newValue >= sb.Minimum && newValue <= sb.Maximum)
+                    {
+                        sb.Value = newValue;
+                        RenderVirtualPage(newListView, tabInfo.RealLines, sb.Value);
+                    }
+                }
+            };
+
+            vScroll.Scroll += (s, e) => {
+                RenderVirtualPage(newListView, tabInfo.RealLines, e.NewValue);
+            };
+
+            if (tabControlFiles != null)
+            {
+                tabControlFiles.TabPages.Add(newTab);
+                tabControlFiles.SelectedTab = newTab;
+            }
+
+            if (fileListBox != null)
+            {
+                fileListBox.Items.Add(fileName);
+            }
+
+            RenderVirtualPage(newListView, tabInfo.RealLines, 0);
+            WriteOutputLog($"Successfully opened: {fileName}");
+        }
+
+        private void ExecuteSafeFolderScan()
+        {
+            using (var dialog = new CommonOpenFileDialog())
+            {
+                dialog.IsFolderPicker = true;
+                dialog.Title = "Chọn Thư Mục";
+                dialog.EnsurePathExists = true;
+
+                if (dialog.ShowDialog() == CommonFileDialogResult.Ok)
+                {
+                    try
+                    {
+                        string targetDirectory = dialog.FileName;
+
+                        if (!string.IsNullOrEmpty(targetDirectory) && Directory.Exists(targetDirectory))
+                        {
+                            DirectoryInfo di = new DirectoryInfo(targetDirectory);
+                            string[] searchPatterns = { "*.log", "*.bin" };
+                            List<FileInfo> filteredFiles = new List<FileInfo>();
+
+                            foreach (string pattern in searchPatterns)
+                            {
+                                filteredFiles.AddRange(di.GetFiles(pattern, SearchOption.AllDirectories));
+                            }
+
+                            int loadedCount = 0;
+                            foreach (FileInfo fileInfo in filteredFiles)
+                            {
+                                AddFileToTab(fileInfo.FullName);
+                                loadedCount++;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(ex.Message, "Lỗi");
+                    }
+                }
+            }
+        }
+
+        private void OpenButton_Click(object sender, EventArgs e)
+        {
+            if (openButton != null && openButton.ContextMenuStrip != null)
+                openButton.ContextMenuStrip.Show(openButton, new Point(0, openButton.Height));
+            else if (mainPopupMenu != null)
+                mainPopupMenu.Show(openButton, new Point(0, openButton.Height));
+        }
+        private void openButton_Click(object sender, EventArgs e) { OpenButton_Click(sender, e); }
+
+        private void SelectFilesMenuItem_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Title = "Open Log or Bin Files";
+                ofd.Filter = "Log & Bin Files (*.log; *.bin)|*.log;*.bin";
+                ofd.Multiselect = true;
+                ofd.RestoreDirectory = true;
+
+                if (ofd.ShowDialog(this) == DialogResult.OK)
+                {
+                    foreach (string file in ofd.FileNames) AddFileToTab(file);
+                }
+            }
+        }
+        private void selectFilesMenuItem_Click(object sender, EventArgs e) { SelectFilesMenuItem_Click(sender, e); }
+        private void SelectFolderMenuItem_Click(object sender, EventArgs e) { ExecuteSafeFolderScan(); }
+        private void selectFolderMenuItem_Click(object sender, EventArgs e) { ExecuteSafeFolderScan(); }
+
+        // =========================================================================
+        // HÀM TÌM KIẾM ĐỒNG BỘ: TỰ ĐỘNG CHUYỂN CHẾ ĐỘ REGEX / THƯỜNG
+        // =========================================================================
+        private void FindButton_Click(object sender, EventArgs e)
+        {
+            if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
+            {
+                MessageBox.Show("Please enter a keyword or Regex to search!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+            TabPage currentTab = tabControlFiles.SelectedTab;
+
+            if (!openedTabs.ContainsKey(currentTab)) return;
+            var tabInfo = openedTabs[currentTab];
+
+            List<ListViewItem> sourceLines = tabInfo.RealLines;
+            if (sourceLines == null || sourceLines.Count == 0) return;
+
+            string rawInput = searchTextBox.Text.Trim();
+            bool isRegexMode = Regex.IsMatch(rawInput, @"[\.\*\+\?^${}()|[\]\\]");
+
+            try
+            {
+                // =========================================================================
+                // ⚡ CHẾ ĐỘ 1: TÌM KIẾM REGEX (IN LOG RA OUTPUT + HIGHLIGHT SẴN SÁNG RỰC)
+                // =========================================================================
+                if (isRegexMode)
+                {
+                    // Reset màu nền cũ
+                    foreach (var line in sourceLines) line.BackColor = Color.White;
+
+                    var searchResults = new List<SearchResultItem>();
+                    Regex regex = new Regex(rawInput, RegexOptions.IgnoreCase);
+
+                    for (int i = 0; i < sourceLines.Count; i++)
+                    {
+                        string hexData = sourceLines[i].SubItems[1].Text;
+                        Match mHex = regex.Match(hexData);
+                        if (mHex.Success)
+                        {
+                            searchResults.Add(new SearchResultItem { LineIndex = i, Offset = sourceLines[i].Text, HexData = hexData, DecodedText = sourceLines[i].SubItems[2].Text, MatchIndexInColumn = mHex.Index, ActualMatchLength = mHex.Length, MatchedInHex = true });
+                            sourceLines[i].BackColor = Color.Yellow;
+                            continue;
+                        }
+
+                        string decodedText = sourceLines[i].SubItems[2].Text;
+                        Match mText = regex.Match(decodedText);
+                        if (mText.Success)
+                        {
+                            searchResults.Add(new SearchResultItem { LineIndex = i, Offset = sourceLines[i].Text, HexData = hexData, DecodedText = decodedText, MatchIndexInColumn = mText.Index, ActualMatchLength = mText.Length, MatchedInHex = false });
+                            sourceLines[i].BackColor = Color.Yellow; 
+                        }
+                    }
+
+                    if (searchResults.Count == 0)
+                    {
+                        if (tabInfo.VirtualScrollBar != null) RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, tabInfo.VirtualScrollBar.Value);
+                        MessageBox.Show($"No result '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+
+                    if (rtbOutput != null)
+                    {
+                        foreach (var res in searchResults)
+                        {
+                            string context = res.MatchedInHex ? res.HexData : res.DecodedText;
+                            if (context.Length > 45) context = context.Substring(0, 42) + "...";
+
+                            rtbOutput.SelectionStart = rtbOutput.Text.Length;
+                            rtbOutput.SelectionLength = 0;
+                            rtbOutput.SelectionColor = Color.DodgerBlue;
+                            rtbOutput.AppendText($"    👉 [Line:{res.LineIndex + 1} | Offset:{res.Offset}]");
+
+                            rtbOutput.SelectionColor = Color.DarkGray;
+                            rtbOutput.AppendText($" -> Content: {context}\n");
+                        }
+                        rtbOutput.SelectionStart = rtbOutput.Text.Length;
+                        rtbOutput.ScrollToCaret();
+                    }
+
+                    if (tabInfo.VirtualScrollBar != null)
+                    {
+                        int firstMatchLine = searchResults[0].LineIndex;
+                        tabInfo.VirtualScrollBar.Value = Math.Min(tabInfo.VirtualScrollBar.Maximum, Math.Max(0, firstMatchLine - 5));
+                        int startViewIndex = tabInfo.VirtualScrollBar.Value;
+
+                        RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, startViewIndex);
+
+                        int relativeIndex = firstMatchLine - startViewIndex;
+                        if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
+                        {
+                            tabInfo.DisplayGrid.Focus();
+                            tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
+                            tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
+                        }
+                        tabInfo.DisplayGrid.Refresh();
+                    }
+                }
+                else
+                {
+                    string cleanInput = rawInput.Replace(" ", "").ToLower();
+                    int foundLineIndex = -1;
+                    int matchPosInString = -1;
+                    bool isHexMatch = false;
+
+                    for (int i = sourceLines.Count - 1; i >= 0; i--)
+                    {
+                        string hexOriginal = sourceLines[i].SubItems[1].Text;
+                        string hexClean = hexOriginal.Replace(" ", "").ToLower();
+
+                        int idxHex = hexClean.LastIndexOf(cleanInput);
+                        if (idxHex != -1)
+                        {
+                            foundLineIndex = i;
+                            matchPosInString = idxHex;
+                            isHexMatch = true;
+                            break;
+                        }
+
+                        string decodedText = sourceLines[i].SubItems[2].Text.ToLower();
+                        int idxText = decodedText.LastIndexOf(rawInput.ToLower());
+                        if (idxText != -1)
+                        {
+                            foundLineIndex = i;
+                            matchPosInString = idxText;
+                            isHexMatch = false;
+                            break;
+                        }
+                    }
+
+                    if (foundLineIndex == -1)
+                    {
+                        MessageBox.Show($"Search target '{rawInput}' not found in the entire file.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    if (sourceLines.Count > foundLineIndex + 1)
+                    {
+                        sourceLines.RemoveRange(foundLineIndex + 1, sourceLines.Count - (foundLineIndex + 1));
+                    }
+
+                    ListViewItem targetLine = sourceLines[foundLineIndex];
+                    if (isHexMatch)
+                    {
+                        string hexOriginal = targetLine.SubItems[1].Text;
+                        string hexClean = hexOriginal.Replace(" ", "");
+
+                        string cutHexClean = hexClean.Substring(0, matchPosInString + cleanInput.Length);
+
+                        StringBuilder sb = new StringBuilder();
+                        for (int k = 0; k < cutHexClean.Length; k += 2)
+                        {
+                            if (k + 2 <= cutHexClean.Length)
+                                sb.Append(cutHexClean.Substring(k, 2) + " ");
+                            else
+                                sb.Append(cutHexClean.Substring(k) + " ");
+                        }
+                        targetLine.SubItems[1].Text = sb.ToString().Trim().ToUpper();
+                    }
+                    else
+                    {
+                        string currentText = targetLine.SubItems[2].Text;
+                        targetLine.SubItems[2].Text = currentText.Substring(0, matchPosInString + rawInput.Length);
+                    }
+
+                    targetLine.BackColor = Color.Yellow;
+
+                    tabInfo.IsShaped = true;
+
+                   if (tabInfo.DisplayGrid != null)
+                    {
+                        if (tabInfo.VirtualScrollBar != null)
+                        {
+                            tabInfo.VirtualScrollBar.Maximum = Math.Max(0, sourceLines.Count - MAX_DISPLAY_LINES);
+                            tabInfo.VirtualScrollBar.Value = Math.Min(tabInfo.VirtualScrollBar.Maximum, Math.Max(0, foundLineIndex - 5));
+                        }
+
+                        int startViewIndex = tabInfo.VirtualScrollBar != null ? tabInfo.VirtualScrollBar.Value : 0;
+
+                        RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, startViewIndex);
+
+                        int relativeIndex = foundLineIndex - startViewIndex;
+                        if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
+                        {
+                            tabInfo.DisplayGrid.Focus();
+                            tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
+                            tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
+                        }
+
+                        tabInfo.DisplayGrid.Refresh();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Errorư: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void RtbOutput_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (rtbOutput == null || string.IsNullOrEmpty(rtbOutput.Text)) return;
+
+            try
+            {
+                int charIndex = rtbOutput.GetCharIndexFromPosition(e.Location);
+                int lineIndex = rtbOutput.GetLineFromCharIndex(charIndex);
+                string currentLineText = rtbOutput.Lines[lineIndex];
+
+                Match m = Regex.Match(currentLineText, @"\[Line:(\d+)\s*\|\s*Offset:([0-9A-Fa-f]+)\]");
+
+                if (m.Success)
+                {
+                    int targetLineIndex = int.Parse(m.Groups[1].Value) - 1;
+
+                    if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+                    TabPage currentTab = tabControlFiles.SelectedTab;
+                    if (!openedTabs.ContainsKey(currentTab)) return;
+                    var tabInfo = openedTabs[currentTab];
+                    List<ListViewItem> sourceLines = tabInfo.RealLines;
+
+                    if (targetLineIndex < 0 || targetLineIndex >= sourceLines.Count) return;
+
+                    if (tabInfo.VirtualScrollBar != null)
+                    {
+                        tabInfo.VirtualScrollBar.Maximum = Math.Max(0, sourceLines.Count - MAX_DISPLAY_LINES);
+                        tabInfo.VirtualScrollBar.Value = Math.Min(tabInfo.VirtualScrollBar.Maximum, Math.Max(0, targetLineIndex - 5));
+                    }
+                    int startViewIndex = tabInfo.VirtualScrollBar != null ? tabInfo.VirtualScrollBar.Value : 0;
+
+                    RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, startViewIndex);
+
+                    if (tabInfo.DisplayGrid != null && tabInfo.DisplayGrid.Items.Count > 0)
+                    {
+                        tabInfo.DisplayGrid.Focus();
+                        int relativeIndex = targetLineIndex - startViewIndex;
+                        if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
+                        {
+                            tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
+                            tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void SaveButton_Click(object sender, EventArgs e)
+        {
+            List<FileTabInfo> shapedFiles = new List<FileTabInfo>();
+            foreach (var tabInfo in openedTabs.Values)
+            {
+                if (tabInfo.IsShaped) shapedFiles.Add(tabInfo);
+            }
+
+            if (shapedFiles.Count == 0)
+            {
+                MessageBox.Show("No files have been modified or shaped yet!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            Form saveForm = new Form();
+            saveForm.Text = "Save Manager - Command Data Shaping Tool";
+            saveForm.Size = new Size(500, 400);
+            saveForm.StartPosition = FormStartPosition.CenterParent;
+            saveForm.FormBorderStyle = FormBorderStyle.FixedDialog;
+            saveForm.MaximizeBox = false;
+
+            Label lblInfo = new Label() { Text = $"Detected {shapedFiles.Count} modified file(s). Select files you want to save:", Location = new Point(15, 15), Size = new Size(450, 25), Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+            CheckedListBox chkListBox = new CheckedListBox() { Location = new Point(15, 45), Size = new Size(455, 200), Font = new Font("Consolas", 9.5F) };
+
+            foreach (var file in shapedFiles) chkListBox.Items.Add(Path.GetFileName(file.FilePath), true);
+
+            GroupBox groupOptions = new GroupBox() { Text = "Choose Save Method", Location = new Point(15, 255), Size = new Size(455, 60) };
+            RadioButton rdoOverwrite = new RadioButton() { Text = "Method 1: Overwrite original files", Location = new Point(15, 25), Size = new Size(200, 20), Checked = true };
+            RadioButton rdoSaveAs = new RadioButton() { Text = "Method 2: Export to new folder", Location = new Point(230, 25), Size = new Size(200, 20) };
+            groupOptions.Controls.Add(rdoOverwrite);
+            groupOptions.Controls.Add(rdoSaveAs);
+
+            Button btnExecute = new Button() { Text = "Execute Save", Location = new Point(265, 325), Size = new Size(100, 30) };
+            Button btnCancel = new Button() { Text = "Cancel", Location = new Point(370, 325), Size = new Size(100, 30) };
+            btnCancel.Click += (s, ev) => saveForm.Close();
+
+            btnExecute.Click += (s, ev) => {
+                if (chkListBox.CheckedItems.Count == 0)
+                {
+                    MessageBox.Show("Please select at least one file to save!", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                List<FileTabInfo> selectedToSave = new List<FileTabInfo>();
+                for (int i = 0; i < chkListBox.Items.Count; i++)
+                {
+                    if (chkListBox.GetItemChecked(i)) selectedToSave.Add(shapedFiles[i]);
+                }
+
+                string exportFolder = "";
+                if (rdoSaveAs.Checked)
+                {
+                    using (FolderBrowserDialog fbd = new FolderBrowserDialog())
+                    {
+                        fbd.Description = "Select a folder to export all selected shaped files:";
+                        if (fbd.ShowDialog(saveForm) == DialogResult.OK) exportFolder = fbd.SelectedPath;
+                        else return;
+                    }
+                }
+
+                int successCount = 0;
+                try
+                {
+                    foreach (var fileInfo in selectedToSave)
+                    {
+                        List<byte> outputBytes = new List<byte>();
+                        foreach (ListViewItem item in fileInfo.RealLines)
+                        {
+                            string hexData = item.SubItems[1].Text.Trim();
+                            if (string.IsNullOrEmpty(hexData)) continue;
+
+                            string[] hexParts = hexData.Split(' ');
+                            foreach (string part in hexParts)
+                            {
+                                if (!string.IsNullOrEmpty(part)) outputBytes.Add(Convert.ToByte(part, 16));
+                            }
+                        }
+
+                        string finalSavePath = rdoOverwrite.Checked ? fileInfo.FilePath : Path.Combine(exportFolder, Path.GetFileName(fileInfo.FilePath));
+                        File.WriteAllBytes(finalSavePath, outputBytes.ToArray());
+
+                        if (rdoOverwrite.Checked) fileInfo.FileLength = outputBytes.Count;
+                        fileInfo.IsShaped = false;
+                        successCount++;
+                        WriteOutputLog($"Saved shaped data to: {Path.GetFileName(finalSavePath)}");
+                    }
+
+                    MessageBox.Show($"Successfully saved {successCount} file!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    saveForm.Close();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error saving files: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
+            saveForm.Controls.Add(lblInfo);
+            saveForm.Controls.Add(chkListBox);
+            saveForm.Controls.Add(groupOptions);
+            saveForm.Controls.Add(btnExecute);
+            saveForm.Controls.Add(btnCancel);
+            saveForm.ShowDialog(this);
+        }
+
+        private List<ListViewItem> GetAllFileLines(string filePath)
+        {
+            List<ListViewItem> list = new List<ListViewItem>();
+            if (!File.Exists(filePath)) return list;
+
+            System.Text.Encoding encodingNhat = System.Text.Encoding.GetEncoding("Shift-JIS");
+            byte[] buffer = new byte[BYTES_PER_LINE];
+            long offset = 0;
+
+            try
+            {
+                using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    int bytesRead;
+                    while ((bytesRead = fs.Read(buffer, 0, BYTES_PER_LINE)) > 0)
+                    {
+                        string offsetStr = offset.ToString("x8").ToUpper();
+                        List<string> hexChunks = new List<string>();
+                        for (int i = 0; i < bytesRead; i++) hexChunks.Add(buffer[i].ToString("x2").ToUpper());
+                        string hexStr = string.Join(" ", hexChunks);
+                        string rawText = encodingNhat.GetString(buffer, 0, bytesRead);
+                        string cleanText = "";
+                        foreach (char c in rawText) cleanText += (c != '\0' && !char.IsControl(c)) ? c : '.';
+
+                        ListViewItem item = new ListViewItem(offsetStr);
+                        item.SubItems.Add(hexStr);
+                        item.SubItems.Add(cleanText);
+                        list.Add(item);
+                        offset += BYTES_PER_LINE;
+                    }
+                }
+            }
+            catch (Exception ex) { WriteOutputLog($"Read Error: {ex.Message}"); }
+            return list;
+        }
+
+        private void RenderVirtualPage(ListView lv, List<ListViewItem> lines, int startIndex)
+        {
+            if (lv == null || lines == null) return;
+            lv.BeginUpdate();
+            lv.Items.Clear();
+
+            int count = Math.Min(MAX_DISPLAY_LINES, lines.Count - startIndex);
+            for (int i = 0; i < count; i++)
+            {
+                ListViewItem original = lines[startIndex + i];
+                ListViewItem clone = new ListViewItem(original.Text);
+                clone.SubItems.Add(original.SubItems[1].Text);
+                clone.SubItems.Add(original.SubItems[2].Text);
+
+                clone.BackColor = original.BackColor;
+
+                lv.Items.Add(clone);
+            }
+            lv.EndUpdate();
+        }
+
+        private void WriteOutputLog(string content)
+        {
+            if (rtbOutput == null) return;
+            if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
+
+            Color msgColor = Color.LightGray;
+            if (content.Contains("[Folder Scan]") || content.Contains("Successfully") || content.Contains("Shaped]") || content.Contains("[File Saved]") || content.Contains("Found]"))
+                msgColor = Color.LimeGreen;
+            else if (content.Contains("Error") || content.Contains("Fail"))
+                msgColor = Color.Tomato;
+
+            rtbOutput.SelectionStart = rtbOutput.Text.Length;
+            rtbOutput.SelectionLength = 0;
+            rtbOutput.SelectionColor = Color.Gray;
+            rtbOutput.AppendText($"[{DateTime.Now:HH:mm:ss}] ");
+            rtbOutput.SelectionColor = msgColor;
+            rtbOutput.AppendText(content + "\n");
+            rtbOutput.SelectionStart = rtbOutput.Text.Length;
+            rtbOutput.ScrollToCaret();
+        }
+
+        private void FileListBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (fileListBox == null || fileListBox.SelectedItem == null) return;
+            string selectedFileName = fileListBox.SelectedItem.ToString();
+
+            if (tabControlFiles != null)
+            {
+                foreach (TabPage tab in tabControlFiles.TabPages)
+                {
+                    if (tab.Text == selectedFileName)
+                    {
+                        tabControlFiles.SelectedTab = tab;
+
+                        if (openedTabs.ContainsKey(tab))
+                        {
+                            var tabInfo = openedTabs[tab];
+                            if (tabInfo.DisplayGrid != null)
+                            {
+                                tabInfo.DisplayGrid.Focus();
+
+                                if (tabInfo.DisplayGrid.Items.Count > 0 && tabInfo.DisplayGrid.SelectedItems.Count == 0)
+                                {
+                                    tabInfo.DisplayGrid.Items[0].Selected = true;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void Form1_Load(object sender, EventArgs e) { }
+
+        private void TabControlFiles_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            try
+            {
+                if (tabControlFiles == null) return;
+                TabPage tab = tabControlFiles.TabPages[e.Index];
+                Rectangle tabRect = tabControlFiles.GetTabRect(e.Index);
+                if (e.State == DrawItemState.Selected) e.Graphics.FillRectangle(Brushes.White, tabRect);
+                else e.Graphics.FillRectangle(Brushes.LightGray, tabRect);
+                Font fontTab = new Font("Segoe UI", 9, FontStyle.Regular);
+                e.Graphics.DrawString(tab.Text, fontTab, Brushes.Black, tabRect.X + 5, tabRect.Y + 4);
+                e.Graphics.DrawString("X", fontTab, Brushes.Red, tabRect.Right - 18, tabRect.Y + 4);
+            }
+            catch { }
+        }
+
+        private void TabControlFiles_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (tabControlFiles == null) return;
+            for (int i = 0; i < tabControlFiles.TabCount; i++)
+            {
+                Rectangle tabRect = tabControlFiles.GetTabRect(i);
+                Rectangle xRect = new Rectangle(tabRect.Right - 20, tabRect.Y, 20, tabRect.Height);
+                if (xRect.Contains(e.Location)) { CloseTabInfo(tabControlFiles.TabPages[i]); break; }
+            }
+        }
+
+        private void CloseTabInfo(TabPage tab)
+        {
+            if (tab == null || !openedTabs.ContainsKey(tab)) return;
+            string fileName = tab.Text;
+            if (fileListBox != null) fileListBox.Items.Remove(fileName);
+            openedTabs.Remove(tab);
+            if (tabControlFiles != null) tabControlFiles.TabPages.Remove(tab);
+        }
+
+        private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e)
+        {
+        }
+    }
+}
