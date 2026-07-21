@@ -252,7 +252,7 @@ namespace LogFormatter
                         if (mHex.Success)
                         {
                             searchResults.Add(new SearchResultItem { LineIndex = i, Offset = sourceLines[i].Text, HexData = hexData, DecodedText = sourceLines[i].SubItems[2].Text, MatchIndexInColumn = mHex.Index, ActualMatchLength = mHex.Length, MatchedInHex = true });
-                            sourceLines[i].BackColor = Color.Yellow;
+                            sourceLines[i].BackColor = Color.Yellow; // Highlight sẵn màu vàng rực trong bộ đệm dữ liệu
                             continue;
                         }
 
@@ -261,16 +261,19 @@ namespace LogFormatter
                         if (mText.Success)
                         {
                             searchResults.Add(new SearchResultItem { LineIndex = i, Offset = sourceLines[i].Text, HexData = hexData, DecodedText = decodedText, MatchIndexInColumn = mText.Index, ActualMatchLength = mText.Length, MatchedInHex = false });
-                            sourceLines[i].BackColor = Color.Yellow; 
+                            sourceLines[i].BackColor = Color.Yellow; // Highlight sẵn màu vàng rực trong bộ đệm dữ liệu
                         }
                     }
 
                     if (searchResults.Count == 0)
                     {
                         if (tabInfo.VirtualScrollBar != null) RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, tabInfo.VirtualScrollBar.Value);
-                        MessageBox.Show($"No result '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        MessageBox.Show($"No Regex matches found for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
+
+                    // In log đúng 1 lần ra Output
+                    WriteOutputLog($"[Regex Found] Found {searchResults.Count} match(es) for '{rawInput}'. Click below to jump:");
 
                     if (rtbOutput != null)
                     {
@@ -291,6 +294,7 @@ namespace LogFormatter
                         rtbOutput.ScrollToCaret();
                     }
 
+                    // Tự động nhảy tới và hiển thị highlight dòng đầu tiên luôn
                     if (tabInfo.VirtualScrollBar != null)
                     {
                         int firstMatchLine = searchResults[0].LineIndex;
@@ -309,6 +313,9 @@ namespace LogFormatter
                         tabInfo.DisplayGrid.Refresh();
                     }
                 }
+                // =========================================================================
+                // ✂️ CHẾ ĐỘ 2: TÌM KIẾM THƯỜNG (RÀ TỪ DƯỚI LÊN, XÓA DỮ LIỆU FILE THẲNG, KHÔNG OUTPUT)
+                // =========================================================================
                 else
                 {
                     string cleanInput = rawInput.Replace(" ", "").ToLower();
@@ -346,11 +353,14 @@ namespace LogFormatter
                         MessageBox.Show($"Search target '{rawInput}' not found in the entire file.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
+
+                    // 1. Thực hiện xóa toàn bộ các dòng nằm PHÍA DƯỚI dòng tìm thấy trở xuống
                     if (sourceLines.Count > foundLineIndex + 1)
                     {
                         sourceLines.RemoveRange(foundLineIndex + 1, sourceLines.Count - (foundLineIndex + 1));
                     }
 
+                    // 2. Tiến hành chặt đuôi ngay trên chính dòng tìm thấy
                     ListViewItem targetLine = sourceLines[foundLineIndex];
                     if (isHexMatch)
                     {
@@ -375,11 +385,13 @@ namespace LogFormatter
                         targetLine.SubItems[2].Text = currentText.Substring(0, matchPosInString + rawInput.Length);
                     }
 
+                    // Highlight nhuộm vàng dòng chốt hạ này trong bộ nhớ dữ liệu
                     targetLine.BackColor = Color.Yellow;
 
                     tabInfo.IsShaped = true;
 
-                   if (tabInfo.DisplayGrid != null)
+                    // 3. Ép giao diện vẽ lại chuẩn xác
+                    if (tabInfo.DisplayGrid != null)
                     {
                         if (tabInfo.VirtualScrollBar != null)
                         {
@@ -405,7 +417,7 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Errorư: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Error during search: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -544,7 +556,7 @@ namespace LogFormatter
                         WriteOutputLog($"Saved shaped data to: {Path.GetFileName(finalSavePath)}");
                     }
 
-                    MessageBox.Show($"Successfully saved {successCount} file!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show($"Successfully saved {successCount} file(s)!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     saveForm.Close();
                 }
                 catch (Exception ex)
@@ -597,6 +609,9 @@ namespace LogFormatter
             return list;
         }
 
+        // =========================================================================
+        // HÀM VẼ TRANG HIỂN THỊ VIRTUAL GRID - GIỮ NGUYÊN MÀU VÀ DATA SAU KHI SỬA
+        // =========================================================================
         private void RenderVirtualPage(ListView lv, List<ListViewItem> lines, int startIndex)
         {
             if (lv == null || lines == null) return;
@@ -608,9 +623,10 @@ namespace LogFormatter
             {
                 ListViewItem original = lines[startIndex + i];
                 ListViewItem clone = new ListViewItem(original.Text);
-                clone.SubItems.Add(original.SubItems[1].Text);
+                clone.SubItems.Add(original.SubItems[1].Text); // Giữ chuỗi dữ liệu Hex đã bị cắt
                 clone.SubItems.Add(original.SubItems[2].Text);
 
+                // Đồng bộ giữ nguyên màu nền nhuộm vàng rực từ bộ nhớ lên màn hình ảo
                 clone.BackColor = original.BackColor;
 
                 lv.Items.Add(clone);
