@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,6 +11,29 @@ using System.Windows.Forms;
 
 namespace LogFormatter
 {
+    public class CustomListView : ListView
+    {
+        private const int WM_NCCALCSIZE = 0x0083;
+        private const int SB_VERT = 1;
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
+
+        public CustomListView()
+        {
+            this.DoubleBuffered = true;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg == WM_NCCALCSIZE)
+            {
+                ShowScrollBar(this.Handle, SB_VERT, false);
+            }
+        }
+    }
+
     public partial class Form1 : Form
     {
         private class FileTabInfo
@@ -18,13 +42,12 @@ namespace LogFormatter
             public long FileLength { get; set; }
             public ListView DisplayGrid { get; set; }
             public VScrollBar VirtualScrollBar { get; set; }
-            public List<ListViewItem> RealLines { get; set; }
-            public bool IsShaped { get; set; }
+            public HashSet<long> HighlightedLines { get; set; } = new HashSet<long>();
         }
 
         private class SearchResultItem
         {
-            public int LineIndex { get; set; }
+            public long LineIndex { get; set; }
             public string Offset { get; set; }
             public string HexData { get; set; }
             public string DecodedText { get; set; }
@@ -36,6 +59,7 @@ namespace LogFormatter
         private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
         private const int BYTES_PER_LINE = 16;
         private const int MAX_DISPLAY_LINES = 50;
+        private const int VIRTUAL_SCROLL_SCALE = 100000;
 
         public Form1()
         {
@@ -75,23 +99,25 @@ namespace LogFormatter
             TabPage newTab = new TabPage(fileName);
             Panel containerPanel = new Panel() { Dock = DockStyle.Fill };
 
-            ListView newListView = new ListView();
+            CustomListView newListView = new CustomListView();
             newListView.Dock = DockStyle.Fill;
             newListView.View = View.Details;
             newListView.Font = new Font("Consolas", 10F);
             newListView.GridLines = true;
             newListView.FullRowSelect = true;
-            newListView.Columns.Add("Offset", 100);
-            newListView.Columns.Add("Hex Data", 380);
-            newListView.Columns.Add("Decoded Text", 200);
+            newListView.HideSelection = false;
 
-            List<ListViewItem> allLines = GetAllFileLines(filePath);
+            newListView.Columns.Add("Offset", 100);
+            newListView.Columns.Add("Hex Data", 450);
+            newListView.Columns.Add("Decoded Text", 220);
 
             VScrollBar vScroll = new VScrollBar();
             vScroll.Name = "vScroll";
             vScroll.Dock = DockStyle.Right;
             vScroll.Minimum = 0;
-            vScroll.Maximum = Math.Max(0, allLines.Count - MAX_DISPLAY_LINES);
+            vScroll.Maximum = VIRTUAL_SCROLL_SCALE;
+            vScroll.SmallChange = 500;  // 🎯 TĂNG ĐỘ NHẠY KHI BẤM NÚT MŨI TÊN (MỖI LẦN BẤM CUỘN VÀI DÒNG)
+            vScroll.LargeChange = 2000;
 
             containerPanel.Controls.Add(newListView);
             containerPanel.Controls.Add(vScroll);
@@ -102,27 +128,35 @@ namespace LogFormatter
                 FilePath = filePath,
                 FileLength = fileLength,
                 DisplayGrid = newListView,
-                VirtualScrollBar = vScroll,
-                RealLines = allLines,
-                IsShaped = false
+                VirtualScrollBar = vScroll
             };
             openedTabs.Add(newTab, tabInfo);
 
+            // 🎯 XỬ LÝ LĂN CHUỘT
             newListView.MouseWheel += (s, e) => {
-                if (containerPanel.Controls.ContainsKey("vScroll"))
-                {
-                    VScrollBar sb = (VScrollBar)containerPanel.Controls["vScroll"];
-                    int newValue = sb.Value - (e.Delta / 120);
-                    if (newValue >= sb.Minimum && newValue <= sb.Maximum)
-                    {
-                        sb.Value = newValue;
-                        RenderVirtualPage(newListView, tabInfo.RealLines, sb.Value);
-                    }
-                }
+                int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
+                int newValue = vScroll.Value - (e.Delta / 120 * 500);
+                if (newValue < vScroll.Minimum) newValue = vScroll.Minimum;
+                if (newValue > maxScrollVal) newValue = maxScrollVal;
+
+                vScroll.Value = newValue;
+                long totalLines = GetMaxScrollableLineIndex(tabInfo);
+                long computedLine = (long)Math.Round((double)vScroll.Value / maxScrollVal * totalLines);
+                RenderVirtualPageStream(tabInfo, computedLine);
             };
 
+            // 🎯 XỬ LÝ SỰ KIỆN CUỘN - BẮT CẢ BẤM MŨI TÊN VÀ KÉO CHUỘT
             vScroll.Scroll += (s, e) => {
-                RenderVirtualPage(newListView, tabInfo.RealLines, e.NewValue);
+                int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
+                long totalLines = GetMaxScrollableLineIndex(tabInfo);
+
+                // Cập nhật giá trị chuẩn cho vScroll
+                int val = e.NewValue;
+                if (val < vScroll.Minimum) val = vScroll.Minimum;
+                if (val > maxScrollVal) val = maxScrollVal;
+
+                long computedLine = (long)Math.Round((double)val / maxScrollVal * totalLines);
+                RenderVirtualPageStream(tabInfo, computedLine);
             };
 
             if (tabControlFiles != null)
@@ -136,8 +170,14 @@ namespace LogFormatter
                 fileListBox.Items.Add(fileName);
             }
 
-            RenderVirtualPage(newListView, tabInfo.RealLines, 0);
-            WriteOutputLog($"Successfully opened: {fileName}");
+            RenderVirtualPageStream(tabInfo, 0);
+            WriteOutputLog($"Successfully opened: {fileName} ({fileLength / 1024.0 / 1024.0 / 1024.0:F2} GB)");
+        }
+
+        private long GetMaxScrollableLineIndex(FileTabInfo tabInfo)
+        {
+            long totalFileLines = (long)Math.Ceiling((double)tabInfo.FileLength / BYTES_PER_LINE);
+            return Math.Max(0, totalFileLines - 1);
         }
 
         private void ExecuteSafeFolderScan()
@@ -209,9 +249,6 @@ namespace LogFormatter
         private void SelectFolderMenuItem_Click(object sender, EventArgs e) { ExecuteSafeFolderScan(); }
         private void selectFolderMenuItem_Click(object sender, EventArgs e) { ExecuteSafeFolderScan(); }
 
-        // =========================================================================
-        // HÀM TÌM KIẾM ĐỒNG BỘ: TỰ ĐỘNG CHUYỂN CHẾ ĐỘ REGEX / THƯỜNG
-        // =========================================================================
         private void FindButton_Click(object sender, EventArgs e)
         {
             if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
@@ -226,198 +263,107 @@ namespace LogFormatter
             if (!openedTabs.ContainsKey(currentTab)) return;
             var tabInfo = openedTabs[currentTab];
 
-            List<ListViewItem> sourceLines = tabInfo.RealLines;
-            if (sourceLines == null || sourceLines.Count == 0) return;
-
             string rawInput = searchTextBox.Text.Trim();
-            bool isRegexMode = Regex.IsMatch(rawInput, @"[\.\*\+\?^${}()|[\]\\]");
 
             try
             {
-                // =========================================================================
-                // ⚡ CHẾ ĐỘ 1: TÌM KIẾM REGEX (IN LOG RA OUTPUT + HIGHLIGHT SẴN SÁNG RỰC)
-                // =========================================================================
-                if (isRegexMode)
+                tabInfo.HighlightedLines.Clear();
+                var searchResults = new List<SearchResultItem>();
+                Regex regex = new Regex(rawInput, RegexOptions.IgnoreCase);
+
+                System.Text.Encoding encodingNhat = System.Text.Encoding.GetEncoding("Shift-JIS");
+                byte[] buffer = new byte[BYTES_PER_LINE];
+                long currentLineIndex = 0;
+
+                using (FileStream fs = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
-                    // Reset màu nền cũ
-                    foreach (var line in sourceLines) line.BackColor = Color.White;
-
-                    var searchResults = new List<SearchResultItem>();
-                    Regex regex = new Regex(rawInput, RegexOptions.IgnoreCase);
-
-                    for (int i = 0; i < sourceLines.Count; i++)
+                    int bytesRead;
+                    while ((bytesRead = fs.Read(buffer, 0, BYTES_PER_LINE)) > 0)
                     {
-                        string hexData = sourceLines[i].SubItems[1].Text;
+                        long currentByteOffset = fs.Position - bytesRead;
+
+                        List<string> hexChunks = new List<string>();
+                        for (int k = 0; k < bytesRead; k++) hexChunks.Add(buffer[k].ToString("x2").ToUpper());
+                        string hexData = string.Join(" ", hexChunks);
+                        string decodedText = encodingNhat.GetString(buffer, 0, bytesRead);
+
                         Match mHex = regex.Match(hexData);
                         if (mHex.Success)
                         {
-                            searchResults.Add(new SearchResultItem { LineIndex = i, Offset = sourceLines[i].Text, HexData = hexData, DecodedText = sourceLines[i].SubItems[2].Text, MatchIndexInColumn = mHex.Index, ActualMatchLength = mHex.Length, MatchedInHex = true });
-                            sourceLines[i].BackColor = Color.Yellow; // Highlight sẵn màu vàng rực trong bộ đệm dữ liệu
+                            searchResults.Add(new SearchResultItem { LineIndex = currentLineIndex, Offset = currentByteOffset.ToString("x8").ToUpper(), HexData = hexData, DecodedText = decodedText, MatchIndexInColumn = mHex.Index, ActualMatchLength = mHex.Length, MatchedInHex = true });
+                            tabInfo.HighlightedLines.Add(currentLineIndex);
+                            currentLineIndex++;
                             continue;
                         }
 
-                        string decodedText = sourceLines[i].SubItems[2].Text;
                         Match mText = regex.Match(decodedText);
                         if (mText.Success)
                         {
-                            searchResults.Add(new SearchResultItem { LineIndex = i, Offset = sourceLines[i].Text, HexData = hexData, DecodedText = decodedText, MatchIndexInColumn = mText.Index, ActualMatchLength = mText.Length, MatchedInHex = false });
-                            sourceLines[i].BackColor = Color.Yellow; // Highlight sẵn màu vàng rực trong bộ đệm dữ liệu
+                            searchResults.Add(new SearchResultItem { LineIndex = currentLineIndex, Offset = currentByteOffset.ToString("x8").ToUpper(), HexData = hexData, DecodedText = decodedText, MatchIndexInColumn = mText.Index, ActualMatchLength = mText.Length, MatchedInHex = false });
+                            tabInfo.HighlightedLines.Add(currentLineIndex);
                         }
-                    }
-
-                    if (searchResults.Count == 0)
-                    {
-                        if (tabInfo.VirtualScrollBar != null) RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, tabInfo.VirtualScrollBar.Value);
-                        MessageBox.Show($"No Regex matches found for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        return;
-                    }
-
-                    // In log đúng 1 lần ra Output
-                    WriteOutputLog($"[Regex Found] Found {searchResults.Count} match(es) for '{rawInput}'. Click below to jump:");
-
-                    if (rtbOutput != null)
-                    {
-                        foreach (var res in searchResults)
-                        {
-                            string context = res.MatchedInHex ? res.HexData : res.DecodedText;
-                            if (context.Length > 45) context = context.Substring(0, 42) + "...";
-
-                            rtbOutput.SelectionStart = rtbOutput.Text.Length;
-                            rtbOutput.SelectionLength = 0;
-                            rtbOutput.SelectionColor = Color.DodgerBlue;
-                            rtbOutput.AppendText($"    👉 [Line:{res.LineIndex + 1} | Offset:{res.Offset}]");
-
-                            rtbOutput.SelectionColor = Color.DarkGray;
-                            rtbOutput.AppendText($" -> Content: {context}\n");
-                        }
-                        rtbOutput.SelectionStart = rtbOutput.Text.Length;
-                        rtbOutput.ScrollToCaret();
-                    }
-
-                    // Tự động nhảy tới và hiển thị highlight dòng đầu tiên luôn
-                    if (tabInfo.VirtualScrollBar != null)
-                    {
-                        int firstMatchLine = searchResults[0].LineIndex;
-                        tabInfo.VirtualScrollBar.Value = Math.Min(tabInfo.VirtualScrollBar.Maximum, Math.Max(0, firstMatchLine - 5));
-                        int startViewIndex = tabInfo.VirtualScrollBar.Value;
-
-                        RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, startViewIndex);
-
-                        int relativeIndex = firstMatchLine - startViewIndex;
-                        if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
-                        {
-                            tabInfo.DisplayGrid.Focus();
-                            tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
-                            tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
-                        }
-                        tabInfo.DisplayGrid.Refresh();
+                        currentLineIndex++;
                     }
                 }
-                // =========================================================================
-                // ✂️ CHẾ ĐỘ 2: TÌM KIẾM THƯỜNG (RÀ TỪ DƯỚI LÊN, XÓA DỮ LIỆU FILE THẲNG, KHÔNG OUTPUT)
-                // =========================================================================
-                else
+
+                if (searchResults.Count == 0)
                 {
-                    string cleanInput = rawInput.Replace(" ", "").ToLower();
-                    int foundLineIndex = -1;
-                    int matchPosInString = -1;
-                    bool isHexMatch = false;
-
-                    for (int i = sourceLines.Count - 1; i >= 0; i--)
-                    {
-                        string hexOriginal = sourceLines[i].SubItems[1].Text;
-                        string hexClean = hexOriginal.Replace(" ", "").ToLower();
-
-                        int idxHex = hexClean.LastIndexOf(cleanInput);
-                        if (idxHex != -1)
-                        {
-                            foundLineIndex = i;
-                            matchPosInString = idxHex;
-                            isHexMatch = true;
-                            break;
-                        }
-
-                        string decodedText = sourceLines[i].SubItems[2].Text.ToLower();
-                        int idxText = decodedText.LastIndexOf(rawInput.ToLower());
-                        if (idxText != -1)
-                        {
-                            foundLineIndex = i;
-                            matchPosInString = idxText;
-                            isHexMatch = false;
-                            break;
-                        }
-                    }
-
-                    if (foundLineIndex == -1)
-                    {
-                        MessageBox.Show($"Search target '{rawInput}' not found in the entire file.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        return;
-                    }
-
-                    // 1. Thực hiện xóa toàn bộ các dòng nằm PHÍA DƯỚI dòng tìm thấy trở xuống
-                    if (sourceLines.Count > foundLineIndex + 1)
-                    {
-                        sourceLines.RemoveRange(foundLineIndex + 1, sourceLines.Count - (foundLineIndex + 1));
-                    }
-
-                    // 2. Tiến hành chặt đuôi ngay trên chính dòng tìm thấy
-                    ListViewItem targetLine = sourceLines[foundLineIndex];
-                    if (isHexMatch)
-                    {
-                        string hexOriginal = targetLine.SubItems[1].Text;
-                        string hexClean = hexOriginal.Replace(" ", "");
-
-                        string cutHexClean = hexClean.Substring(0, matchPosInString + cleanInput.Length);
-
-                        StringBuilder sb = new StringBuilder();
-                        for (int k = 0; k < cutHexClean.Length; k += 2)
-                        {
-                            if (k + 2 <= cutHexClean.Length)
-                                sb.Append(cutHexClean.Substring(k, 2) + " ");
-                            else
-                                sb.Append(cutHexClean.Substring(k) + " ");
-                        }
-                        targetLine.SubItems[1].Text = sb.ToString().Trim().ToUpper();
-                    }
-                    else
-                    {
-                        string currentText = targetLine.SubItems[2].Text;
-                        targetLine.SubItems[2].Text = currentText.Substring(0, matchPosInString + rawInput.Length);
-                    }
-
-                    // Highlight nhuộm vàng dòng chốt hạ này trong bộ nhớ dữ liệu
-                    targetLine.BackColor = Color.Yellow;
-
-                    tabInfo.IsShaped = true;
-
-                    // 3. Ép giao diện vẽ lại chuẩn xác
-                    if (tabInfo.DisplayGrid != null)
-                    {
-                        if (tabInfo.VirtualScrollBar != null)
-                        {
-                            tabInfo.VirtualScrollBar.Maximum = Math.Max(0, sourceLines.Count - MAX_DISPLAY_LINES);
-                            tabInfo.VirtualScrollBar.Value = Math.Min(tabInfo.VirtualScrollBar.Maximum, Math.Max(0, foundLineIndex - 5));
-                        }
-
-                        int startViewIndex = tabInfo.VirtualScrollBar != null ? tabInfo.VirtualScrollBar.Value : 0;
-
-                        RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, startViewIndex);
-
-                        int relativeIndex = foundLineIndex - startViewIndex;
-                        if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
-                        {
-                            tabInfo.DisplayGrid.Focus();
-                            tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
-                            tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
-                        }
-
-                        tabInfo.DisplayGrid.Refresh();
-                    }
+                    RenderVirtualPageStream(tabInfo, 0);
+                    MessageBox.Show($"No matches found for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
                 }
+
+                WriteOutputLog($"[Found] Found {searchResults.Count} match(es) for '{rawInput}'. Click below to jump:");
+
+                if (rtbOutput != null)
+                {
+                    foreach (var res in searchResults)
+                    {
+                        string context = res.MatchedInHex ? res.HexData : res.DecodedText;
+                        if (context.Length > 45) context = context.Substring(0, 42) + "...";
+
+                        rtbOutput.SelectionStart = rtbOutput.Text.Length;
+                        rtbOutput.SelectionLength = 0;
+                        rtbOutput.SelectionColor = Color.DodgerBlue;
+                        rtbOutput.AppendText($"    👉 [Line:{res.LineIndex + 1} | Offset:{res.Offset}]");
+
+                        rtbOutput.SelectionColor = Color.DarkGray;
+                        rtbOutput.AppendText($" -> Content: {context}\n");
+                    }
+                    rtbOutput.SelectionStart = rtbOutput.Text.Length;
+                    rtbOutput.ScrollToCaret();
+                }
+
+                NavigateToLine(tabInfo, searchResults[0].LineIndex);
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Error during search: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void NavigateToLine(FileTabInfo tabInfo, long targetLineIndex)
+        {
+            long totalLines = GetMaxScrollableLineIndex(tabInfo);
+            if (tabInfo.VirtualScrollBar != null && totalLines > 0)
+            {
+                int maxScrollVal = tabInfo.VirtualScrollBar.Maximum - tabInfo.VirtualScrollBar.LargeChange + 1;
+                double ratio = (double)targetLineIndex / totalLines;
+                tabInfo.VirtualScrollBar.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
+            }
+
+            long startViewIndex = Math.Max(0, targetLineIndex - 5);
+            RenderVirtualPageStream(tabInfo, startViewIndex);
+
+            if (tabInfo.DisplayGrid != null)
+            {
+                int relativeIndex = (int)(targetLineIndex - startViewIndex);
+                if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
+                {
+                    tabInfo.DisplayGrid.Focus();
+                    tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
+                    tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
+                }
             }
         }
 
@@ -435,164 +381,61 @@ namespace LogFormatter
 
                 if (m.Success)
                 {
-                    int targetLineIndex = int.Parse(m.Groups[1].Value) - 1;
+                    long targetLineIndex = long.Parse(m.Groups[1].Value) - 1;
 
                     if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
                     TabPage currentTab = tabControlFiles.SelectedTab;
                     if (!openedTabs.ContainsKey(currentTab)) return;
                     var tabInfo = openedTabs[currentTab];
-                    List<ListViewItem> sourceLines = tabInfo.RealLines;
 
-                    if (targetLineIndex < 0 || targetLineIndex >= sourceLines.Count) return;
-
-                    if (tabInfo.VirtualScrollBar != null)
-                    {
-                        tabInfo.VirtualScrollBar.Maximum = Math.Max(0, sourceLines.Count - MAX_DISPLAY_LINES);
-                        tabInfo.VirtualScrollBar.Value = Math.Min(tabInfo.VirtualScrollBar.Maximum, Math.Max(0, targetLineIndex - 5));
-                    }
-                    int startViewIndex = tabInfo.VirtualScrollBar != null ? tabInfo.VirtualScrollBar.Value : 0;
-
-                    RenderVirtualPage(tabInfo.DisplayGrid, sourceLines, startViewIndex);
-
-                    if (tabInfo.DisplayGrid != null && tabInfo.DisplayGrid.Items.Count > 0)
-                    {
-                        tabInfo.DisplayGrid.Focus();
-                        int relativeIndex = targetLineIndex - startViewIndex;
-                        if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
-                        {
-                            tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
-                            tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
-                        }
-                    }
+                    NavigateToLine(tabInfo, targetLineIndex);
                 }
             }
             catch { }
         }
 
+        // 🎯 HÀM SAVE RỖNG ĐỂ TRÁNH LỖI CS1061 KHI DESIGNER LIÊN KẾT EVENT
         private void SaveButton_Click(object sender, EventArgs e)
         {
-            List<FileTabInfo> shapedFiles = new List<FileTabInfo>();
-            foreach (var tabInfo in openedTabs.Values)
-            {
-                if (tabInfo.IsShaped) shapedFiles.Add(tabInfo);
-            }
-
-            if (shapedFiles.Count == 0)
-            {
-                MessageBox.Show("No files have been modified or shaped yet!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            Form saveForm = new Form();
-            saveForm.Text = "Save Manager - Command Data Shaping Tool";
-            saveForm.Size = new Size(500, 400);
-            saveForm.StartPosition = FormStartPosition.CenterParent;
-            saveForm.FormBorderStyle = FormBorderStyle.FixedDialog;
-            saveForm.MaximizeBox = false;
-
-            Label lblInfo = new Label() { Text = $"Detected {shapedFiles.Count} modified file(s). Select files you want to save:", Location = new Point(15, 15), Size = new Size(450, 25), Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
-            CheckedListBox chkListBox = new CheckedListBox() { Location = new Point(15, 45), Size = new Size(455, 200), Font = new Font("Consolas", 9.5F) };
-
-            foreach (var file in shapedFiles) chkListBox.Items.Add(Path.GetFileName(file.FilePath), true);
-
-            GroupBox groupOptions = new GroupBox() { Text = "Choose Save Method", Location = new Point(15, 255), Size = new Size(455, 60) };
-            RadioButton rdoOverwrite = new RadioButton() { Text = "Method 1: Overwrite original files", Location = new Point(15, 25), Size = new Size(200, 20), Checked = true };
-            RadioButton rdoSaveAs = new RadioButton() { Text = "Method 2: Export to new folder", Location = new Point(230, 25), Size = new Size(200, 20) };
-            groupOptions.Controls.Add(rdoOverwrite);
-            groupOptions.Controls.Add(rdoSaveAs);
-
-            Button btnExecute = new Button() { Text = "Execute Save", Location = new Point(265, 325), Size = new Size(100, 30) };
-            Button btnCancel = new Button() { Text = "Cancel", Location = new Point(370, 325), Size = new Size(100, 30) };
-            btnCancel.Click += (s, ev) => saveForm.Close();
-
-            btnExecute.Click += (s, ev) => {
-                if (chkListBox.CheckedItems.Count == 0)
-                {
-                    MessageBox.Show("Please select at least one file to save!", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                List<FileTabInfo> selectedToSave = new List<FileTabInfo>();
-                for (int i = 0; i < chkListBox.Items.Count; i++)
-                {
-                    if (chkListBox.GetItemChecked(i)) selectedToSave.Add(shapedFiles[i]);
-                }
-
-                string exportFolder = "";
-                if (rdoSaveAs.Checked)
-                {
-                    using (FolderBrowserDialog fbd = new FolderBrowserDialog())
-                    {
-                        fbd.Description = "Select a folder to export all selected shaped files:";
-                        if (fbd.ShowDialog(saveForm) == DialogResult.OK) exportFolder = fbd.SelectedPath;
-                        else return;
-                    }
-                }
-
-                int successCount = 0;
-                try
-                {
-                    foreach (var fileInfo in selectedToSave)
-                    {
-                        List<byte> outputBytes = new List<byte>();
-                        foreach (ListViewItem item in fileInfo.RealLines)
-                        {
-                            string hexData = item.SubItems[1].Text.Trim();
-                            if (string.IsNullOrEmpty(hexData)) continue;
-
-                            string[] hexParts = hexData.Split(' ');
-                            foreach (string part in hexParts)
-                            {
-                                if (!string.IsNullOrEmpty(part)) outputBytes.Add(Convert.ToByte(part, 16));
-                            }
-                        }
-
-                        string finalSavePath = rdoOverwrite.Checked ? fileInfo.FilePath : Path.Combine(exportFolder, Path.GetFileName(fileInfo.FilePath));
-                        File.WriteAllBytes(finalSavePath, outputBytes.ToArray());
-
-                        if (rdoOverwrite.Checked) fileInfo.FileLength = outputBytes.Count;
-                        fileInfo.IsShaped = false;
-                        successCount++;
-                        WriteOutputLog($"Saved shaped data to: {Path.GetFileName(finalSavePath)}");
-                    }
-
-                    MessageBox.Show($"Successfully saved {successCount} file(s)!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    saveForm.Close();
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Error saving files: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            };
-
-            saveForm.Controls.Add(lblInfo);
-            saveForm.Controls.Add(chkListBox);
-            saveForm.Controls.Add(groupOptions);
-            saveForm.Controls.Add(btnExecute);
-            saveForm.Controls.Add(btnCancel);
-            saveForm.ShowDialog(this);
         }
 
-        private List<ListViewItem> GetAllFileLines(string filePath)
+        private void RenderVirtualPageStream(FileTabInfo tabInfo, long startIndex)
         {
-            List<ListViewItem> list = new List<ListViewItem>();
-            if (!File.Exists(filePath)) return list;
+            if (tabInfo == null || tabInfo.DisplayGrid == null || !File.Exists(tabInfo.FilePath)) return;
+
+            ListView lv = tabInfo.DisplayGrid;
+            lv.BeginUpdate();
+            lv.Items.Clear();
 
             System.Text.Encoding encodingNhat = System.Text.Encoding.GetEncoding("Shift-JIS");
             byte[] buffer = new byte[BYTES_PER_LINE];
-            long offset = 0;
 
             try
             {
-                using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (FileStream fs = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
-                    int bytesRead;
-                    while ((bytesRead = fs.Read(buffer, 0, BYTES_PER_LINE)) > 0)
+                    for (int i = 0; i < MAX_DISPLAY_LINES; i++)
                     {
-                        string offsetStr = offset.ToString("x8").ToUpper();
+                        long exactLineOffset = (startIndex + i) * BYTES_PER_LINE;
+
+                        if (exactLineOffset >= tabInfo.FileLength) break;
+
+                        fs.Seek(exactLineOffset, SeekOrigin.Begin);
+
+                        int bytesToRead = BYTES_PER_LINE;
+                        if (exactLineOffset + bytesToRead > tabInfo.FileLength)
+                        {
+                            bytesToRead = (int)(tabInfo.FileLength - exactLineOffset);
+                        }
+
+                        int bytesRead = fs.Read(buffer, 0, bytesToRead);
+                        if (bytesRead <= 0) break;
+
+                        string offsetStr = exactLineOffset.ToString("x8").ToUpper();
                         List<string> hexChunks = new List<string>();
-                        for (int i = 0; i < bytesRead; i++) hexChunks.Add(buffer[i].ToString("x2").ToUpper());
+                        for (int k = 0; k < bytesRead; k++) hexChunks.Add(buffer[k].ToString("x2").ToUpper());
                         string hexStr = string.Join(" ", hexChunks);
+
                         string rawText = encodingNhat.GetString(buffer, 0, bytesRead);
                         string cleanText = "";
                         foreach (char c in rawText) cleanText += (c != '\0' && !char.IsControl(c)) ? c : '.';
@@ -600,38 +443,17 @@ namespace LogFormatter
                         ListViewItem item = new ListViewItem(offsetStr);
                         item.SubItems.Add(hexStr);
                         item.SubItems.Add(cleanText);
-                        list.Add(item);
-                        offset += BYTES_PER_LINE;
+
+                        long globalLineIndex = startIndex + i;
+                        if (tabInfo.HighlightedLines.Contains(globalLineIndex)) item.BackColor = Color.Yellow;
+
+                        lv.Items.Add(item);
                     }
                 }
             }
-            catch (Exception ex) { WriteOutputLog($"Read Error: {ex.Message}"); }
-            return list;
-        }
-
-        // =========================================================================
-        // HÀM VẼ TRANG HIỂN THỊ VIRTUAL GRID - GIỮ NGUYÊN MÀU VÀ DATA SAU KHI SỬA
-        // =========================================================================
-        private void RenderVirtualPage(ListView lv, List<ListViewItem> lines, int startIndex)
-        {
-            if (lv == null || lines == null) return;
-            lv.BeginUpdate();
-            lv.Items.Clear();
-
-            int count = Math.Min(MAX_DISPLAY_LINES, lines.Count - startIndex);
-            for (int i = 0; i < count; i++)
-            {
-                ListViewItem original = lines[startIndex + i];
-                ListViewItem clone = new ListViewItem(original.Text);
-                clone.SubItems.Add(original.SubItems[1].Text); // Giữ chuỗi dữ liệu Hex đã bị cắt
-                clone.SubItems.Add(original.SubItems[2].Text);
-
-                // Đồng bộ giữ nguyên màu nền nhuộm vàng rực từ bộ nhớ lên màn hình ảo
-                clone.BackColor = original.BackColor;
-
-                lv.Items.Add(clone);
-            }
+            catch { }
             lv.EndUpdate();
+            lv.SelectedItems.Clear();
         }
 
         private void WriteOutputLog(string content)
@@ -640,7 +462,7 @@ namespace LogFormatter
             if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
 
             Color msgColor = Color.LightGray;
-            if (content.Contains("[Folder Scan]") || content.Contains("Successfully") || content.Contains("Shaped]") || content.Contains("[File Saved]") || content.Contains("Found]"))
+            if (content.Contains("[Folder Scan]") || content.Contains("Successfully") || content.Contains("[Found]"))
                 msgColor = Color.LimeGreen;
             else if (content.Contains("Error") || content.Contains("Fail"))
                 msgColor = Color.Tomato;
