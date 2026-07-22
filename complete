@@ -56,6 +56,9 @@ namespace LogFormatter
             public VScrollBar VirtualScrollBar { get; set; }
             public string CurrentSearchKeyword { get; set; } = "";
             public bool IsRegexHighlightActive { get; set; } = false;
+
+            // 🎯 LƯU DÒNG ĐƯỢC CHỌN TỪ PING ĐỂ GIỮ NGUYÊN KHI SCROLL & CHUYỂN TAB
+            public long SelectedPingLineIndex { get; set; } = -1;
         }
 
         private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
@@ -71,8 +74,18 @@ namespace LogFormatter
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
             this.Load += (s, e) => {
-                if (fileListBox != null) fileListBox.Items.Clear();
-                if (tabControlFiles != null) tabControlFiles.TabPages.Clear();
+                if (fileListBox != null)
+                {
+                    fileListBox.Items.Clear();
+                    fileListBox.SelectedIndexChanged += FileListBox_SelectedIndexChanged;
+                }
+                if (tabControlFiles != null)
+                {
+                    tabControlFiles.TabPages.Clear();
+                    tabControlFiles.DrawMode = TabDrawMode.OwnerDrawFixed;
+                    tabControlFiles.DrawItem += TabControlFiles_DrawItem;
+                    tabControlFiles.MouseDown += TabControlFiles_MouseDown;
+                }
                 openedTabs.Clear();
 
                 if (rtbOutput != null)
@@ -83,7 +96,7 @@ namespace LogFormatter
             };
         }
 
-        #region --- 1. XỬ LÝ MỞ FILE, FOLDER & GIẢI NÉN ZIP ---
+        #region --- 1. XỬ LÝ MỞ FILE, FOLDER & GIẢI NÉN ZIP CHỈ LẤY .LOG ---
 
         private void AddFileToTab(string filePath)
         {
@@ -91,14 +104,14 @@ namespace LogFormatter
 
             string extensionLower = Path.GetExtension(filePath).ToLower();
 
-            // 🎯 Xử lý file ZIP
+            // 🎯 XỬ LÝ FILE ZIP: GIẢI NÉN VÀ CHỈ LẤY FILE CÓ ĐUÔI .LOG
             if (extensionLower == ".zip")
             {
                 ProcessZipFile(filePath);
                 return;
             }
 
-            // Chỉ nhận .log và .bin
+            // Nạp file đơn trực tiếp (.log hoặc .bin)
             if (extensionLower != ".log" && extensionLower != ".bin") return;
 
             foreach (var item in openedTabs.Values)
@@ -256,26 +269,20 @@ namespace LogFormatter
                 ZipFile.ExtractToDirectory(zipFilePath, tempFolder);
 
                 DirectoryInfo tempDir = new DirectoryInfo(tempFolder);
-                string[] searchPatterns = { "*.log", "*.bin" };
-                List<FileInfo> extractedFiles = new List<FileInfo>();
+                FileInfo[] logFiles = tempDir.GetFiles("*.log", SearchOption.AllDirectories);
 
-                foreach (string pattern in searchPatterns)
+                if (logFiles.Length == 0)
                 {
-                    extractedFiles.AddRange(tempDir.GetFiles(pattern, SearchOption.AllDirectories));
-                }
-
-                if (extractedFiles.Count == 0)
-                {
-                    WriteOutputLog($"[ZIP Warning] No .log or .bin files found inside '{Path.GetFileName(zipFilePath)}'.");
+                    WriteOutputLog($"[ZIP Warning] No .log files found inside '{Path.GetFileName(zipFilePath)}'.");
                     return;
                 }
 
-                foreach (FileInfo fileInfo in extractedFiles)
+                foreach (FileInfo fileInfo in logFiles)
                 {
                     AddFileToTab(fileInfo.FullName);
                 }
 
-                WriteOutputLog($"[ZIP Success] Unzipped '{Path.GetFileName(zipFilePath)}' -> Loaded {extractedFiles.Count} file(s).");
+                WriteOutputLog($"[ZIP Success] Unzipped '{Path.GetFileName(zipFilePath)}' -> Loaded {logFiles.Length} .log file(s).");
             }
             catch (Exception ex)
             {
@@ -283,22 +290,7 @@ namespace LogFormatter
             }
         }
 
-        private void SelectFilesMenuItem_Click(object sender, EventArgs e)
-        {
-            using (OpenFileDialog ofd = new OpenFileDialog())
-            {
-                ofd.Title = "Open Log, Bin or Zip Files";
-                ofd.Filter = "Supported Files (*.log; *.bin; *.zip)|*.log;*.bin;*.zip|Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|Zip Files (*.zip)|*.zip|All Files (*.*)|*.*";
-                ofd.Multiselect = true;
-                ofd.RestoreDirectory = true;
-
-                if (ofd.ShowDialog(this) == DialogResult.OK)
-                {
-                    foreach (string file in ofd.FileNames) AddFileToTab(file);
-                }
-            }
-        }
-
+        // 🎯 QUÉT THƯ MỤC CHỨA CẢ FILE LOG, BIN VÀ FILE ZIP
         private void ExecuteSafeFolderScan()
         {
             using (var dialog = new CommonOpenFileDialog())
@@ -324,6 +316,12 @@ namespace LogFormatter
                                 filteredFiles.AddRange(di.GetFiles(pattern, SearchOption.AllDirectories));
                             }
 
+                            if (filteredFiles.Count == 0)
+                            {
+                                WriteOutputLog($"[Folder Scan] No .log, .bin, or .zip files found in '{targetDirectory}'.");
+                                return;
+                            }
+
                             foreach (FileInfo fileInfo in filteredFiles)
                             {
                                 AddFileToTab(fileInfo.FullName);
@@ -338,13 +336,8 @@ namespace LogFormatter
             }
         }
 
-        #endregion
-
-        #region --- 2. XỬ LÝ NÚT LƯU CÓ CHECKLIST CHỈ HIỆN FILE ĐÃ SỬA & DIALOG SAVE / SAVE AS ---
-
         private void SaveButton_Click(object sender, EventArgs e)
         {
-            // 🎯 1. Lọc danh sách các file đã chỉnh sửa
             List<FileTabInfo> modifiedTabs = new List<FileTabInfo>();
 
             foreach (var tabInfo in openedTabs.Values)
@@ -367,7 +360,6 @@ namespace LogFormatter
 
             List<string> modifiedFileNames = modifiedTabs.Select(t => Path.GetFileName(t.FilePath)).ToList();
 
-            // 🎯 2. Hiện Checklist chọn file muốn lưu
             using (SaveSelectionForm selectForm = new SaveSelectionForm(modifiedFileNames))
             {
                 if (selectForm.ShowDialog(this) != DialogResult.OK || selectForm.SelectedFileNames.Count == 0)
@@ -377,7 +369,6 @@ namespace LogFormatter
 
                 List<string> chosenFiles = selectForm.SelectedFileNames;
 
-                // 🎯 3. Hiện Dialog chọn [Save (Overwrite)] hoặc [Save As (New Name)]
                 using (SaveModeDialog modeDlg = new SaveModeDialog())
                 {
                     if (modeDlg.ShowDialog(this) != DialogResult.OK || modeDlg.UserChoice == SaveModeDialog.SaveChoice.Cancel)
@@ -388,7 +379,6 @@ namespace LogFormatter
                     bool isOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
                     int savedCount = 0;
 
-                    // 🎯 4. Tiến hành lưu
                     foreach (var tabInfo in modifiedTabs)
                     {
                         string currentFileName = Path.GetFileName(tabInfo.FilePath);
@@ -398,7 +388,6 @@ namespace LogFormatter
                         {
                             string targetPath = tabInfo.FilePath;
 
-                            // 📌 NẾU CHỌN SAVE AS: BẬT HỘP THOẠI CHO PHÉP ĐẶT TÊN FILE MỚI
                             if (!isOverwrite)
                             {
                                 using (SaveFileDialog sfd = new SaveFileDialog())
@@ -406,7 +395,6 @@ namespace LogFormatter
                                     sfd.Title = $"Save As - {currentFileName}";
                                     sfd.Filter = "Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|All Files (*.*)|*.*";
                                     sfd.InitialDirectory = Path.GetDirectoryName(tabInfo.FilePath);
-                                    // Tên gợi ý mặc định có đuôi _trimmed
                                     sfd.FileName = Path.GetFileNameWithoutExtension(tabInfo.FilePath) + "_trimmed" + Path.GetExtension(tabInfo.FilePath);
 
                                     if (sfd.ShowDialog(this) == DialogResult.OK)
@@ -415,12 +403,11 @@ namespace LogFormatter
                                     }
                                     else
                                     {
-                                        continue; // Người dùng bấm Hủy ở hộp thoại đặt tên
+                                        continue;
                                     }
                                 }
                             }
 
-                            // Thực hiện ghi dữ liệu đã cắt
                             string tempPath = targetPath + ".tmp";
                             using (FileStream src = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                             using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
@@ -461,9 +448,6 @@ namespace LogFormatter
             }
         }
 
-        #endregion
-
-        #region --- 3. TÌM KIẾM & ĐIỀU HƯỚNG DỮ LIỆU ---
 
         private long GetMaxScrollableLineIndex(FileTabInfo tabInfo)
         {
@@ -513,6 +497,8 @@ namespace LogFormatter
 
             if (!openedTabs.ContainsKey(currentTab)) return;
             var tabInfo = openedTabs[currentTab];
+
+            tabInfo.SelectedPingLineIndex = -1;
 
             string rawInput = searchTextBox.Text.Trim();
             tabInfo.CurrentSearchKeyword = rawInput;
@@ -696,6 +682,7 @@ namespace LogFormatter
                     }
                     rtbOutput.ScrollToCaret();
                 }
+
                 NavigateToLine(tabInfo, searchResults[0].LineIndex);
             }
             catch (OperationCanceledException)
@@ -714,6 +701,8 @@ namespace LogFormatter
 
         private void NavigateToLine(FileTabInfo tabInfo, long targetLineIndex)
         {
+            tabInfo.SelectedPingLineIndex = targetLineIndex;
+
             long totalLines = GetMaxScrollableLineIndex(tabInfo);
             if (tabInfo.VirtualScrollBar != null && totalLines > 0)
             {
@@ -724,19 +713,6 @@ namespace LogFormatter
 
             long startViewIndex = Math.Max(0, targetLineIndex - 2);
             RenderVirtualPageStream(tabInfo, startViewIndex);
-
-            if (tabInfo.DisplayGrid != null)
-            {
-                int relativeIndex = (int)(targetLineIndex - startViewIndex);
-                if (relativeIndex >= 0 && relativeIndex < tabInfo.DisplayGrid.Items.Count)
-                {
-                    tabInfo.DisplayGrid.Focus();
-                    tabInfo.DisplayGrid.SelectedItems.Clear();
-                    tabInfo.DisplayGrid.Items[relativeIndex].Selected = true;
-                    tabInfo.DisplayGrid.Items[relativeIndex].Focused = true;
-                    tabInfo.DisplayGrid.Items[relativeIndex].EnsureVisible();
-                }
-            }
         }
 
         private void RtbOutput_MouseClick(object sender, MouseEventArgs e)
@@ -788,7 +764,8 @@ namespace LogFormatter
                 {
                     for (int i = 0; i < MAX_DISPLAY_LINES; i++)
                     {
-                        long exactLineOffset = (startIndex + i) * BYTES_PER_LINE;
+                        long currentLineIndex = startIndex + i;
+                        long exactLineOffset = currentLineIndex * BYTES_PER_LINE;
 
                         if (exactLineOffset >= tabInfo.FileLength) break;
 
@@ -815,6 +792,12 @@ namespace LogFormatter
                         ListViewItem item = new ListViewItem(offsetStr);
                         item.SubItems.Add(hexStr);
                         item.SubItems.Add(cleanText);
+
+                        if (tabInfo.SelectedPingLineIndex != -1 && currentLineIndex == tabInfo.SelectedPingLineIndex)
+                        {
+                            item.Selected = true;
+                            item.Focused = true;
+                        }
 
                         lv.Items.Add(item);
                     }
@@ -844,9 +827,6 @@ namespace LogFormatter
             rtbOutput.ScrollToCaret();
         }
 
-        #endregion
-
-        #region --- 4. SỰ KIỆN GIAO DIỆN FORM & MENU ---
 
         private void OpenButton_Click(object sender, EventArgs e)
         {
@@ -855,11 +835,27 @@ namespace LogFormatter
             else if (mainPopupMenu != null)
                 mainPopupMenu.Show(openButton, new Point(0, openButton.Height));
         }
-        private void openButton_Click(object sender, EventArgs e) { OpenButton_Click(sender, e); }
 
-        private void selectFilesMenuItem_Click(object sender, EventArgs e) { SelectFilesMenuItem_Click(sender, e); }
-        private void SelectFolderMenuItem_Click(object sender, EventArgs e) { ExecuteSafeFolderScan(); }
-        private void selectFolderMenuItem_Click(object sender, EventArgs e) { ExecuteSafeFolderScan(); }
+        private void SelectFilesMenuItem_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Title = "Open Log, Bin or Zip Files";
+                ofd.Filter = "Supported Files (*.log; *.bin; *.zip)|*.log;*.bin;*.zip|Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|Zip Files (*.zip)|*.zip|All Files (*.*)|*.*";
+                ofd.Multiselect = true;
+                ofd.RestoreDirectory = true;
+
+                if (ofd.ShowDialog(this) == DialogResult.OK)
+                {
+                    foreach (string file in ofd.FileNames) AddFileToTab(file);
+                }
+            }
+        }
+
+        private void SelectFolderMenuItem_Click(object sender, EventArgs e)
+        {
+            ExecuteSafeFolderScan();
+        }
 
         private void FileListBox_SelectedIndexChanged(object sender, EventArgs e)
         {
@@ -873,13 +869,20 @@ namespace LogFormatter
                     if (tab.Text == selectedFileName)
                     {
                         tabControlFiles.SelectedTab = tab;
+
+                        if (openedTabs.ContainsKey(tab))
+                        {
+                            var tabInfo = openedTabs[tab];
+                            if (tabInfo.SelectedPingLineIndex >= 0)
+                            {
+                                NavigateToLine(tabInfo, tabInfo.SelectedPingLineIndex);
+                            }
+                        }
                         break;
                     }
                 }
             }
         }
-
-        private void Form1_Load(object sender, EventArgs e) { }
 
         private void TabControlFiles_DrawItem(object sender, DrawItemEventArgs e)
         {
@@ -919,12 +922,9 @@ namespace LogFormatter
 
         private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
 
-        #endregion
     }
 
-    #region --- HELPER FORMS FOR SAVE DIALOGS ---
 
-    // 🎯 1. FORM CHECKLIST DANH SÁCH FILE CẦN LƯU
     public class SaveSelectionForm : Form
     {
         private CheckedListBox checkedListBox;
@@ -1012,7 +1012,6 @@ namespace LogFormatter
         }
     }
 
-    // 🎯 2. FORM LỰA CHỌN "SAVE" HOẶC "SAVE AS"
     public class SaveModeDialog : Form
     {
         public enum SaveChoice { SaveOverwrite, SaveAsNew, Cancel }
@@ -1045,7 +1044,7 @@ namespace LogFormatter
 
             Button btnSaveAs = new Button
             {
-                Text = "Save As (_trimmed)",
+                Text = "Save As...",
                 Location = new Point(141, 65),
                 Size = new Size(125, 32)
             };
