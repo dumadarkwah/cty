@@ -287,7 +287,7 @@ namespace LogFormatter
 
                 if (logFiles.Length == 0)
                 {
-                    WriteOutputLog($"No .log files found inside '{Path.GetFileName(zipFilePath)}'.");
+                    WriteOutputLog($"No valid files found inside '{Path.GetFileName(zipFilePath)}'.");
                     return;
                 }
 
@@ -295,8 +295,6 @@ namespace LogFormatter
                 {
                     AddFileToTab(fileInfo.FullName);
                 }
-
-                WriteOutputLog($"Unzipped '{Path.GetFileName(zipFilePath)}'. Loaded {logFiles.Length} .log file(s).");
             }
             catch (Exception ex)
             {
@@ -321,7 +319,7 @@ namespace LogFormatter
                         if (!string.IsNullOrEmpty(targetDirectory) && Directory.Exists(targetDirectory))
                         {
                             DirectoryInfo di = new DirectoryInfo(targetDirectory);
-                            string[] searchPatterns = { "*.log", "*.bin", "*.zip" };
+                            string[] searchPatterns = { "*.log", "*.bin" };
                             List<FileInfo> filteredFiles = new List<FileInfo>();
 
                             foreach (string pattern in searchPatterns)
@@ -355,7 +353,7 @@ namespace LogFormatter
             var modifiedTabs = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
             if (modifiedTabs.Count == 0)
             {
-                MessageBox.Show("No modified files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("No edited files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -447,7 +445,7 @@ namespace LogFormatter
             var modifiedList = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
             if (modifiedList.Count > 0)
             {
-                var result = MessageBox.Show($"You have {modifiedList.Count} edited file(s). Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                var result = MessageBox.Show($"You have {modifiedList.Count} edited file. Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (result == DialogResult.Yes)
                 {
                     if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
@@ -667,7 +665,7 @@ namespace LogFormatter
                 {
                     if (isRegexWildcard)
                     {
-                        WriteOutputLog($" Matched {searchResults.Count} item(s) for '{rawInput}':");
+                        WriteOutputLog($" Matched {searchResults.Count} item for '{rawInput}':");
                         foreach (var res in searchResults)
                         {
                             rtbOutput.SelectionStart = rtbOutput.Text.Length;
@@ -928,7 +926,7 @@ namespace LogFormatter
                 FileInfo fi = new FileInfo(tabInfo.FilePath);
                 if (tabInfo.FileLength != fi.Length)
                 {
-                    var result = MessageBox.Show($"File '{tab.Text}' was modified. Save before closing?", "Unsaved File", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+                    var result = MessageBox.Show($"File '{tab.Text}' was edited. Save before closing?", "Unsaved File", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
                     if (result == DialogResult.Yes)
                     {
                         if (!ExecuteSaveWorkflow(new List<FileTabInfo> { tabInfo })) return;
