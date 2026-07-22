@@ -56,8 +56,6 @@ namespace LogFormatter
             public VScrollBar VirtualScrollBar { get; set; }
             public string CurrentSearchKeyword { get; set; } = "";
             public bool IsRegexHighlightActive { get; set; } = false;
-
-            // 🎯 LƯU DÒNG ĐƯỢC CHỌN TỪ PING ĐỂ GIỮ NGUYÊN KHI SCROLL & CHUYỂN TAB
             public long SelectedPingLineIndex { get; set; } = -1;
         }
 
@@ -94,9 +92,11 @@ namespace LogFormatter
                     rtbOutput.MouseClick += RtbOutput_MouseClick;
                 }
             };
+
+            this.FormClosing += Form1_FormClosing;
         }
 
-        #region --- 1. XỬ LÝ MỞ FILE, FOLDER & GIẢI NÉN ZIP CHỈ LẤY .LOG ---
+        #region --- 1. XỬ LÝ MỞ FILE, FOLDER & ZIP ---
 
         private void AddFileToTab(string filePath)
         {
@@ -104,14 +104,12 @@ namespace LogFormatter
 
             string extensionLower = Path.GetExtension(filePath).ToLower();
 
-            // 🎯 XỬ LÝ FILE ZIP: GIẢI NÉN VÀ CHỈ LẤY FILE CÓ ĐUÔI .LOG
             if (extensionLower == ".zip")
             {
                 ProcessZipFile(filePath);
                 return;
             }
 
-            // Nạp file đơn trực tiếp (.log hoặc .bin)
             if (extensionLower != ".log" && extensionLower != ".bin") return;
 
             foreach (var item in openedTabs.Values)
@@ -143,6 +141,8 @@ namespace LogFormatter
             newListView.DrawItem += (s, e) => {
                 if (!newListView.OwnerDraw) e.DrawDefault = true;
             };
+
+            // 🎯 VẼ HIGHLIGHT CHÓI LỌI CHUẨN XÁC NỀN VÀNG - CHỮ ĐỎ
             newListView.DrawSubItem += (s, e) => {
                 if (!newListView.OwnerDraw)
                 {
@@ -164,31 +164,50 @@ namespace LogFormatter
                 }
 
                 string text = e.SubItem.Text;
-                int matchIndex = text.IndexOf(currentTabInfo.CurrentSearchKeyword, StringComparison.OrdinalIgnoreCase);
+                string keyword = currentTabInfo.CurrentSearchKeyword.Trim();
+
+                // Kiểm tra từ khóa match (hỗ trợ cả tìm Regex không phân biệt hoa thường)
+                int matchIndex = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+
+                bool isSelected = (e.ItemState & ListViewItemStates.Selected) != 0;
+                Color backColor = isSelected ? SystemColors.Highlight : e.SubItem.BackColor;
+                Color textColor = isSelected ? SystemColors.HighlightText : e.SubItem.ForeColor;
+
+                using (SolidBrush bgBrush = new SolidBrush(backColor))
+                {
+                    e.Graphics.FillRectangle(bgBrush, e.Bounds);
+                }
 
                 if (matchIndex < 0)
                 {
-                    e.DrawDefault = true;
+                    TextRenderer.DrawText(e.Graphics, text, newListView.Font, new Point(e.Bounds.X + 2, e.Bounds.Y + 2), textColor, TextFormatFlags.NoPadding);
                     return;
                 }
 
-                e.Graphics.FillRectangle(SystemBrushes.Window, e.Bounds);
-
-                using (Font font = newListView.Font)
+                using (Font fontBold = new Font(newListView.Font, FontStyle.Bold))
                 {
                     string prefix = text.Substring(0, matchIndex);
-                    string matchText = text.Substring(matchIndex, currentTabInfo.CurrentSearchKeyword.Length);
+                    string matchText = text.Substring(matchIndex, keyword.Length);
+                    string suffix = text.Substring(matchIndex + keyword.Length);
 
-                    int prefixWidth = TextRenderer.MeasureText(e.Graphics, prefix, font, Size.Empty, TextFormatFlags.NoPadding).Width;
-                    int matchWidth = TextRenderer.MeasureText(e.Graphics, matchText, font, Size.Empty, TextFormatFlags.NoPadding).Width;
+                    int prefixWidth = TextRenderer.MeasureText(e.Graphics, prefix, newListView.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+                    int matchWidth = TextRenderer.MeasureText(e.Graphics, matchText, fontBold, Size.Empty, TextFormatFlags.NoPadding).Width;
 
-                    Rectangle highlightRect = new Rectangle(e.Bounds.X + prefixWidth + 4, e.Bounds.Y + 2, matchWidth, e.Bounds.Height - 4);
+                    // 🟡 NỀN VÀNG RỰC RỠ (YELLOW) + VIỀN ĐỎ NỔI BẬT NHẤT MÀN HÌNH
+                    Rectangle highlightRect = new Rectangle(e.Bounds.X + prefixWidth + 2, e.Bounds.Y + 1, matchWidth + 2, e.Bounds.Height - 2);
+
                     using (SolidBrush yellowBrush = new SolidBrush(Color.Yellow))
                     {
                         e.Graphics.FillRectangle(yellowBrush, highlightRect);
                     }
+                    using (Pen redPen = new Pen(Color.Red, 1.5f))
+                    {
+                        e.Graphics.DrawRectangle(redPen, highlightRect);
+                    }
 
-                    TextRenderer.DrawText(e.Graphics, text, font, e.Bounds.Location, Color.Black, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+                    TextRenderer.DrawText(e.Graphics, prefix, newListView.Font, new Point(e.Bounds.X + 2, e.Bounds.Y + 2), textColor, TextFormatFlags.NoPadding);
+                    TextRenderer.DrawText(e.Graphics, matchText, fontBold, new Point(e.Bounds.X + prefixWidth + 3, e.Bounds.Y + 2), Color.Red, TextFormatFlags.NoPadding);
+                    TextRenderer.DrawText(e.Graphics, suffix, newListView.Font, new Point(e.Bounds.X + prefixWidth + matchWidth + 4, e.Bounds.Y + 2), textColor, TextFormatFlags.NoPadding);
                 }
             };
 
@@ -290,7 +309,6 @@ namespace LogFormatter
             }
         }
 
-        // 🎯 QUÉT THƯ MỤC CHỨA CẢ FILE LOG, BIN VÀ FILE ZIP
         private void ExecuteSafeFolderScan()
         {
             using (var dialog = new CommonOpenFileDialog())
@@ -326,6 +344,8 @@ namespace LogFormatter
                             {
                                 AddFileToTab(fileInfo.FullName);
                             }
+
+                            WriteOutputLog($"[Folder Scan] Processed folder '{Path.GetFileName(targetDirectory)}' -> Found {filteredFiles.Count} item(s).");
                         }
                     }
                     catch (Exception ex)
@@ -336,118 +356,125 @@ namespace LogFormatter
             }
         }
 
+        #endregion
+
+        #region --- 2. XỬ LÝ LƯU FILE CHUYỂN HỎI LƯU ĐÈ / LƯU MỚI TỰ ĐỘNG ---
+
         private void SaveButton_Click(object sender, EventArgs e)
         {
-            List<FileTabInfo> modifiedTabs = new List<FileTabInfo>();
-
-            foreach (var tabInfo in openedTabs.Values)
-            {
-                if (File.Exists(tabInfo.FilePath))
-                {
-                    FileInfo fi = new FileInfo(tabInfo.FilePath);
-                    if (tabInfo.FileLength != fi.Length)
-                    {
-                        modifiedTabs.Add(tabInfo);
-                    }
-                }
-            }
-
+            var modifiedTabs = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
             if (modifiedTabs.Count == 0)
             {
                 MessageBox.Show("No modified files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            List<string> modifiedFileNames = modifiedTabs.Select(t => Path.GetFileName(t.FilePath)).ToList();
+            ExecuteSaveWorkflow(modifiedTabs);
+        }
 
-            using (SaveSelectionForm selectForm = new SaveSelectionForm(modifiedFileNames))
+        // 🎯 LUỒNG XỬ LÝ LƯU: HỎI TRỰC TIẾP LƯU ĐÈ HOẶC LƯU MỚI
+        private bool ExecuteSaveWorkflow(List<FileTabInfo> targetTabs)
+        {
+            if (targetTabs == null || targetTabs.Count == 0) return true;
+
+            using (SaveModeDialog modeDlg = new SaveModeDialog())
             {
-                if (selectForm.ShowDialog(this) != DialogResult.OK || selectForm.SelectedFileNames.Count == 0)
+                if (modeDlg.ShowDialog(this) != DialogResult.OK || modeDlg.UserChoice == SaveModeDialog.SaveChoice.Cancel)
                 {
-                    return;
+                    return false;
                 }
 
-                List<string> chosenFiles = selectForm.SelectedFileNames;
+                bool isOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
+                int savedCount = 0;
 
-                using (SaveModeDialog modeDlg = new SaveModeDialog())
+                foreach (var tabInfo in targetTabs)
                 {
-                    if (modeDlg.ShowDialog(this) != DialogResult.OK || modeDlg.UserChoice == SaveModeDialog.SaveChoice.Cancel)
+                    string currentFileName = Path.GetFileName(tabInfo.FilePath);
+                    try
                     {
-                        return;
-                    }
+                        string targetPath = tabInfo.FilePath;
 
-                    bool isOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
-                    int savedCount = 0;
-
-                    foreach (var tabInfo in modifiedTabs)
-                    {
-                        string currentFileName = Path.GetFileName(tabInfo.FilePath);
-                        if (!chosenFiles.Contains(currentFileName)) continue;
-
-                        try
+                        if (!isOverwrite)
                         {
-                            string targetPath = tabInfo.FilePath;
-
-                            if (!isOverwrite)
+                            using (SaveFileDialog sfd = new SaveFileDialog())
                             {
-                                using (SaveFileDialog sfd = new SaveFileDialog())
-                                {
-                                    sfd.Title = $"Save As - {currentFileName}";
-                                    sfd.Filter = "Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|All Files (*.*)|*.*";
-                                    sfd.InitialDirectory = Path.GetDirectoryName(tabInfo.FilePath);
-                                    sfd.FileName = Path.GetFileNameWithoutExtension(tabInfo.FilePath) + "_trimmed" + Path.GetExtension(tabInfo.FilePath);
+                                sfd.Title = $"Save As - {currentFileName}";
+                                sfd.Filter = "Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|All Files (*.*)|*.*";
+                                sfd.InitialDirectory = Path.GetDirectoryName(tabInfo.FilePath);
+                                sfd.FileName = Path.GetFileNameWithoutExtension(tabInfo.FilePath) + "_trimmed" + Path.GetExtension(tabInfo.FilePath);
 
-                                    if (sfd.ShowDialog(this) == DialogResult.OK)
-                                    {
-                                        targetPath = sfd.FileName;
-                                    }
-                                    else
-                                    {
-                                        continue;
-                                    }
+                                if (sfd.ShowDialog(this) == DialogResult.OK)
+                                {
+                                    targetPath = sfd.FileName;
+                                }
+                                else
+                                {
+                                    continue;
                                 }
                             }
-
-                            string tempPath = targetPath + ".tmp";
-                            using (FileStream src = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                            using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
-                            {
-                                byte[] buffer = new byte[8192];
-                                long bytesLeft = tabInfo.FileLength;
-                                while (bytesLeft > 0)
-                                {
-                                    int read = src.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesLeft));
-                                    if (read <= 0) break;
-                                    dst.Write(buffer, 0, read);
-                                    bytesLeft -= read;
-                                }
-                            }
-
-                            if (isOverwrite)
-                            {
-                                File.Delete(tabInfo.FilePath);
-                                File.Move(tempPath, tabInfo.FilePath);
-                            }
-                            else
-                            {
-                                if (File.Exists(targetPath)) File.Delete(targetPath);
-                                File.Move(tempPath, targetPath);
-                            }
-
-                            savedCount++;
-                            WriteOutputLog($"[Save Success] Saved: {Path.GetFileName(targetPath)}");
                         }
-                        catch (Exception ex)
+
+                        string tempPath = targetPath + ".tmp";
+                        using (FileStream src = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
                         {
-                            WriteOutputLog($"[Save Error] Failed for {currentFileName}: {ex.Message}");
+                            byte[] buffer = new byte[8192];
+                            long bytesLeft = tabInfo.FileLength;
+                            while (bytesLeft > 0)
+                            {
+                                int read = src.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesLeft));
+                                if (read <= 0) break;
+                                dst.Write(buffer, 0, read);
+                                bytesLeft -= read;
+                            }
                         }
-                    }
 
-                    WriteOutputLog($"[Save Operation Complete] Processed {savedCount} file(s).");
+                        if (isOverwrite)
+                        {
+                            File.Delete(tabInfo.FilePath);
+                            File.Move(tempPath, tabInfo.FilePath);
+                        }
+                        else
+                        {
+                            if (File.Exists(targetPath)) File.Delete(targetPath);
+                            File.Move(tempPath, targetPath);
+                        }
+
+                        savedCount++;
+                        WriteOutputLog($"[Save Success] Saved: {Path.GetFileName(targetPath)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteOutputLog($"[Save Error] Failed for {currentFileName}: {ex.Message}");
+                    }
+                }
+
+                WriteOutputLog($"[Save Operation Complete] Processed {savedCount} file(s).");
+                return true;
+            }
+        }
+
+        // 🎯 BẤM YES KHI ĐÓNG APP -> HỎI LƯU ĐÈ / LƯU MỚI
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            var modifiedList = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
+            if (modifiedList.Count > 0)
+            {
+                var result = MessageBox.Show($"You have {modifiedList.Count} modified file(s). Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes)
+                {
+                    if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
+                }
+                else if (result == DialogResult.Cancel)
+                {
+                    e.Cancel = true;
                 }
             }
         }
 
+        #endregion
+
+        #region --- 3. TÌM KIẾM & XÓA HIGHLIGHT CŨ KHI SEARCH MỚI ---
 
         private long GetMaxScrollableLineIndex(FileTabInfo tabInfo)
         {
@@ -498,10 +525,13 @@ namespace LogFormatter
             if (!openedTabs.ContainsKey(currentTab)) return;
             var tabInfo = openedTabs[currentTab];
 
+            // Reset Highlight cũ
             tabInfo.SelectedPingLineIndex = -1;
+            tabInfo.IsRegexHighlightActive = false;
+            tabInfo.CurrentSearchKeyword = "";
+            if (tabInfo.DisplayGrid != null) tabInfo.DisplayGrid.OwnerDraw = false;
 
             string rawInput = searchTextBox.Text.Trim();
-            tabInfo.CurrentSearchKeyword = rawInput;
 
             searchCts?.Cancel();
             searchCts = new CancellationTokenSource();
@@ -516,11 +546,14 @@ namespace LogFormatter
                 return;
             }
 
+            tabInfo.CurrentSearchKeyword = rawInput;
             tabInfo.IsRegexHighlightActive = isRegexWildcard;
             if (tabInfo.DisplayGrid != null)
             {
                 tabInfo.DisplayGrid.OwnerDraw = isRegexWildcard;
             }
+
+            if (rtbOutput != null) rtbOutput.Clear();
 
             WriteOutputLog($" Mode: {(isRegexWildcard ? "REGEX" : "NORMAL HEX")} | Target Hex: '{rawInput}'...");
 
@@ -652,7 +685,6 @@ namespace LogFormatter
 
                 if (rtbOutput != null)
                 {
-                    rtbOutput.Clear();
                     if (isRegexWildcard)
                     {
                         WriteOutputLog($" Matched {searchResults.Count} item(s) for '{rawInput}':");
@@ -827,6 +859,9 @@ namespace LogFormatter
             rtbOutput.ScrollToCaret();
         }
 
+        #endregion
+
+        #region --- 4. SỰ KIỆN GIAO DIỆN & MENU ---
 
         private void OpenButton_Click(object sender, EventArgs e)
         {
@@ -911,9 +946,29 @@ namespace LogFormatter
             }
         }
 
+        // 🎯 BẤM YES KHI TẮT TAB -> HỎI LƯU ĐÈ / LƯU MỚI TƯƠNG TỰ
         private void CloseTabInfo(TabPage tab)
         {
             if (tab == null || !openedTabs.ContainsKey(tab)) return;
+
+            var tabInfo = openedTabs[tab];
+            if (File.Exists(tabInfo.FilePath))
+            {
+                FileInfo fi = new FileInfo(tabInfo.FilePath);
+                if (tabInfo.FileLength != fi.Length)
+                {
+                    var result = MessageBox.Show($"File '{tab.Text}' was modified. Save before closing?", "Unsaved File", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+                    if (result == DialogResult.Yes)
+                    {
+                        if (!ExecuteSaveWorkflow(new List<FileTabInfo> { tabInfo })) return;
+                    }
+                    else if (result == DialogResult.Cancel)
+                    {
+                        return;
+                    }
+                }
+            }
+
             string fileName = tab.Text;
             if (fileListBox != null) fileListBox.Items.Remove(fileName);
             openedTabs.Remove(tab);
@@ -922,8 +977,10 @@ namespace LogFormatter
 
         private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
 
+        #endregion
     }
 
+    #region --- HELPER FORMS FOR SAVE DIALOGS ---
 
     public class SaveSelectionForm : Form
     {
