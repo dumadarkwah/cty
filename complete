@@ -96,8 +96,6 @@ namespace LogFormatter
             this.FormClosing += Form1_FormClosing;
         }
 
-        #region --- 1. XỬ LÝ MỞ FILE, FOLDER & ZIP ---
-
         private void AddFileToTab(string filePath)
         {
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
@@ -142,7 +140,6 @@ namespace LogFormatter
                 if (!newListView.OwnerDraw) e.DrawDefault = true;
             };
 
-            // 🎯 VẼ HIGHLIGHT CHÓI LỌI CHUẨN XÁC NỀN VÀNG - CHỮ ĐỎ
             newListView.DrawSubItem += (s, e) => {
                 if (!newListView.OwnerDraw)
                 {
@@ -166,7 +163,6 @@ namespace LogFormatter
                 string text = e.SubItem.Text;
                 string keyword = currentTabInfo.CurrentSearchKeyword.Trim();
 
-                // Kiểm tra từ khóa match (hỗ trợ cả tìm Regex không phân biệt hoa thường)
                 int matchIndex = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
 
                 bool isSelected = (e.ItemState & ListViewItemStates.Selected) != 0;
@@ -193,7 +189,6 @@ namespace LogFormatter
                     int prefixWidth = TextRenderer.MeasureText(e.Graphics, prefix, newListView.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
                     int matchWidth = TextRenderer.MeasureText(e.Graphics, matchText, fontBold, Size.Empty, TextFormatFlags.NoPadding).Width;
 
-                    // 🟡 NỀN VÀNG RỰC RỠ (YELLOW) + VIỀN ĐỎ NỔI BẬT NHẤT MÀN HÌNH
                     Rectangle highlightRect = new Rectangle(e.Bounds.X + prefixWidth + 2, e.Bounds.Y + 1, matchWidth + 2, e.Bounds.Height - 2);
 
                     using (SolidBrush yellowBrush = new SolidBrush(Color.Yellow))
@@ -292,7 +287,7 @@ namespace LogFormatter
 
                 if (logFiles.Length == 0)
                 {
-                    WriteOutputLog($"[ZIP Warning] No .log files found inside '{Path.GetFileName(zipFilePath)}'.");
+                    WriteOutputLog($"No .log files found inside '{Path.GetFileName(zipFilePath)}'.");
                     return;
                 }
 
@@ -301,11 +296,11 @@ namespace LogFormatter
                     AddFileToTab(fileInfo.FullName);
                 }
 
-                WriteOutputLog($"[ZIP Success] Unzipped '{Path.GetFileName(zipFilePath)}' -> Loaded {logFiles.Length} .log file(s).");
+                WriteOutputLog($"Unzipped '{Path.GetFileName(zipFilePath)}'. Loaded {logFiles.Length} .log file(s).");
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"[ZIP Error] Failed to extract '{Path.GetFileName(zipFilePath)}': {ex.Message}");
+                WriteOutputLog($"Failed to extract '{Path.GetFileName(zipFilePath)}': {ex.Message}");
             }
         }
 
@@ -336,7 +331,7 @@ namespace LogFormatter
 
                             if (filteredFiles.Count == 0)
                             {
-                                WriteOutputLog($"[Folder Scan] No .log, .bin, or .zip files found in '{targetDirectory}'.");
+                                WriteOutputLog($"No .log, .bin, or .zip files found in '{targetDirectory}'.");
                                 return;
                             }
 
@@ -345,7 +340,7 @@ namespace LogFormatter
                                 AddFileToTab(fileInfo.FullName);
                             }
 
-                            WriteOutputLog($"[Folder Scan] Processed folder '{Path.GetFileName(targetDirectory)}' -> Found {filteredFiles.Count} item(s).");
+                            WriteOutputLog($"Processed folder '{Path.GetFileName(targetDirectory)}'. Found {filteredFiles.Count} item(s).");
                         }
                     }
                     catch (Exception ex)
@@ -356,9 +351,6 @@ namespace LogFormatter
             }
         }
 
-        #endregion
-
-        #region --- 2. XỬ LÝ LƯU FILE CHUYỂN HỎI LƯU ĐÈ / LƯU MỚI TỰ ĐỘNG ---
 
         private void SaveButton_Click(object sender, EventArgs e)
         {
@@ -372,7 +364,6 @@ namespace LogFormatter
             ExecuteSaveWorkflow(modifiedTabs);
         }
 
-        // 🎯 LUỒNG XỬ LÝ LƯU: HỎI TRỰC TIẾP LƯU ĐÈ HOẶC LƯU MỚI
         private bool ExecuteSaveWorkflow(List<FileTabInfo> targetTabs)
         {
             if (targetTabs == null || targetTabs.Count == 0) return true;
@@ -441,20 +432,19 @@ namespace LogFormatter
                         }
 
                         savedCount++;
-                        WriteOutputLog($"[Save Success] Saved: {Path.GetFileName(targetPath)}");
+                        WriteOutputLog($"Saved: {Path.GetFileName(targetPath)}");
                     }
                     catch (Exception ex)
                     {
-                        WriteOutputLog($"[Save Error] Failed for {currentFileName}: {ex.Message}");
+                        WriteOutputLog($"Failed for {currentFileName}: {ex.Message}");
                     }
                 }
 
-                WriteOutputLog($"[Save Operation Complete] Processed {savedCount} file(s).");
+                WriteOutputLog($"Processed {savedCount} file(s).");
                 return true;
             }
         }
 
-        // 🎯 BẤM YES KHI ĐÓNG APP -> HỎI LƯU ĐÈ / LƯU MỚI
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             var modifiedList = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
@@ -471,10 +461,6 @@ namespace LogFormatter
                 }
             }
         }
-
-        #endregion
-
-        #region --- 3. TÌM KIẾM & XÓA HIGHLIGHT CŨ KHI SEARCH MỚI ---
 
         private long GetMaxScrollableLineIndex(FileTabInfo tabInfo)
         {
@@ -525,7 +511,6 @@ namespace LogFormatter
             if (!openedTabs.ContainsKey(currentTab)) return;
             var tabInfo = openedTabs[currentTab];
 
-            // Reset Highlight cũ
             tabInfo.SelectedPingLineIndex = -1;
             tabInfo.IsRegexHighlightActive = false;
             tabInfo.CurrentSearchKeyword = "";
@@ -859,10 +844,6 @@ namespace LogFormatter
             rtbOutput.ScrollToCaret();
         }
 
-        #endregion
-
-        #region --- 4. SỰ KIỆN GIAO DIỆN & MENU ---
-
         private void OpenButton_Click(object sender, EventArgs e)
         {
             if (openButton != null && openButton.ContextMenuStrip != null)
@@ -946,7 +927,6 @@ namespace LogFormatter
             }
         }
 
-        // 🎯 BẤM YES KHI TẮT TAB -> HỎI LƯU ĐÈ / LƯU MỚI TƯƠNG TỰ
         private void CloseTabInfo(TabPage tab)
         {
             if (tab == null || !openedTabs.ContainsKey(tab)) return;
@@ -977,10 +957,7 @@ namespace LogFormatter
 
         private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
 
-        #endregion
     }
-
-    #region --- HELPER FORMS FOR SAVE DIALOGS ---
 
     public class SaveSelectionForm : Form
     {
@@ -1121,6 +1098,4 @@ namespace LogFormatter
             this.Controls.Add(btnCancel);
         }
     }
-
-    #endregion
 }
