@@ -331,7 +331,7 @@ namespace LogFormatter
 
                             if (filteredFiles.Count == 0)
                             {
-                                WriteOutputLog($"No .log, .bin, or .zip files found in '{targetDirectory}'.");
+                                WriteOutputLog($"No valid files found in '{targetDirectory}'.");
                                 return;
                             }
 
@@ -339,8 +339,6 @@ namespace LogFormatter
                             {
                                 AddFileToTab(fileInfo.FullName);
                             }
-
-                            WriteOutputLog($"Processed folder '{Path.GetFileName(targetDirectory)}'. Found {filteredFiles.Count} item(s).");
                         }
                     }
                     catch (Exception ex)
@@ -440,7 +438,6 @@ namespace LogFormatter
                     }
                 }
 
-                WriteOutputLog($"Processed {savedCount} file(s).");
                 return true;
             }
         }
@@ -450,7 +447,7 @@ namespace LogFormatter
             var modifiedList = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
             if (modifiedList.Count > 0)
             {
-                var result = MessageBox.Show($"You have {modifiedList.Count} modified file(s). Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                var result = MessageBox.Show($"You have {modifiedList.Count} edited file(s). Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (result == DialogResult.Yes)
                 {
                     if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
@@ -539,8 +536,6 @@ namespace LogFormatter
             }
 
             if (rtbOutput != null) rtbOutput.Clear();
-
-            WriteOutputLog($" Mode: {(isRegexWildcard ? "REGEX" : "NORMAL HEX")} | Target Hex: '{rawInput}'...");
 
             try
             {
@@ -664,7 +659,7 @@ namespace LogFormatter
                 if (searchResults.Count == 0)
                 {
                     RenderVirtualPageStream(tabInfo, 0);
-                    MessageBox.Show($"No result found for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show($"No result for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 
@@ -687,10 +682,6 @@ namespace LogFormatter
                     }
                     else
                     {
-                        WriteOutputLog($"Deleted trailing data after '{rawInput}'!");
-                        rtbOutput.SelectionStart = rtbOutput.Text.Length;
-                        rtbOutput.SelectionLength = 0;
-
                         rtbOutput.SelectionColor = Color.DodgerBlue;
                         rtbOutput.AppendText($"[Offset:{searchResults[0].Offset}] ");
 
@@ -704,7 +695,7 @@ namespace LogFormatter
             }
             catch (OperationCanceledException)
             {
-                WriteOutputLog("Task was cancelled.");
+                WriteOutputLog("Cancelled.");
             }
             catch (Exception ex)
             {
@@ -856,7 +847,7 @@ namespace LogFormatter
         {
             using (OpenFileDialog ofd = new OpenFileDialog())
             {
-                ofd.Title = "Open Log, Bin or Zip Files";
+                ofd.Title = "Open Files";
                 ofd.Filter = "Supported Files (*.log; *.bin; *.zip)|*.log;*.bin;*.zip|Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|Zip Files (*.zip)|*.zip|All Files (*.*)|*.*";
                 ofd.Multiselect = true;
                 ofd.RestoreDirectory = true;
