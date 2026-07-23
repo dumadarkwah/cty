@@ -1,0 +1,33 @@
+using System;
+using System.Windows.Forms;
+using Microsoft.WindowsAPICodePack.Dialogs;
+
+namespace CommandDataShapingTool
+{
+    public class OpenFileOrFolderDialog
+    {
+        public string Title { get; set; } = "Select Folder";
+        public string Path { get; private set; } = string.Empty;
+
+        public DialogResult ShowDialog(IWin32Window owner)
+        {
+            using (CommonOpenFileDialog dialog = new CommonOpenFileDialog())
+            {
+                dialog.Title = this.Title;
+
+                dialog.IsFolderPicker = true;
+
+                IntPtr hwndOwner = owner?.Handle ?? IntPtr.Zero;
+                CommonFileDialogResult result = dialog.ShowDialog(hwndOwner);
+
+                if (result == CommonFileDialogResult.Ok)
+                {
+                    Path = dialog.FileName;
+                    return DialogResult.OK;
+                }
+
+                return DialogResult.Cancel;
+            }
+        }
+    }
+}
