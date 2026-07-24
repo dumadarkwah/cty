@@ -1,0 +1,1115 @@
+using Microsoft.WindowsAPICodePack.Dialogs;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace LogFormatter
+{
+    public class SearchResultItem
+    {
+        public long LineIndex { get; set; }
+        public string Offset { get; set; }
+        public string HexData { get; set; }
+        public string DecodedText { get; set; }
+        public bool MatchedInHex { get; set; }
+    }
+
+    public class CustomListView : ListView
+    {
+        private const int WM_NCCALCSIZE = 0x0083;
+        private const int SB_VERT = 1;
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
+
+        public CustomListView()
+        {
+            this.DoubleBuffered = true;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg == WM_NCCALCSIZE)
+            {
+                ShowScrollBar(this.Handle, SB_VERT, false);
+            }
+        }
+    }
+
+    public partial class Form1 : Form
+    {
+        private class FileTabInfo
+        {
+            public string FilePath { get; set; }
+            public long FileLength { get; set; }
+            public ListView DisplayGrid { get; set; }
+            public VScrollBar VirtualScrollBar { get; set; }
+            public string CurrentSearchKeyword { get; set; } = "";
+            public bool IsRegexHighlightActive { get; set; } = false;
+            public long SelectedPingLineIndex { get; set; } = -1;
+        }
+
+        private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
+        private const int BYTES_PER_LINE = 16;
+        private const int MAX_DISPLAY_LINES = 50;
+        private const int VIRTUAL_SCROLL_SCALE = 1000000;
+        private CancellationTokenSource searchCts;
+
+        public Form1()
+        {
+            InitializeComponent();
+
+            this.StartPosition = FormStartPosition.CenterScreen;
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            this.Load += (s, e) => {
+                if (fileListBox != null)
+                {
+                    fileListBox.Items.Clear();
+                    fileListBox.SelectedIndexChanged += FileListBox_SelectedIndexChanged;
+                }
+                if (tabControlFiles != null)
+                {
+                    tabControlFiles.TabPages.Clear();
+                    // Đặt chế độ co giãn tự động + chừa khoảng trống hợp lý cho dấu X
+                    tabControlFiles.SizeMode = TabSizeMode.Normal;
+                    tabControlFiles.Padding = new Point(22, 6);
+                    tabControlFiles.DrawMode = TabDrawMode.OwnerDrawFixed;
+                    tabControlFiles.DrawItem += TabControlFiles_DrawItem;
+                    tabControlFiles.MouseDown += TabControlFiles_MouseDown;
+                }
+                openedTabs.Clear();
+
+                if (rtbOutput != null)
+                {
+                    rtbOutput.ReadOnly = true;
+                    rtbOutput.MouseClick += RtbOutput_MouseClick;
+                }
+            };
+
+            this.FormClosing += Form1_FormClosing;
+        }
+
+        private void AddFileToTab(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+
+            string extensionLower = Path.GetExtension(filePath).ToLower();
+
+            if (extensionLower == ".zip")
+            {
+                ProcessZipFile(filePath);
+                return;
+            }
+
+            if (extensionLower != ".log" && extensionLower != ".bin") return;
+
+            foreach (var item in openedTabs.Values)
+            {
+                if (item.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase)) return;
+            }
+
+            FileInfo fi = new FileInfo(filePath);
+            long fileLength = fi.Length;
+            string fileName = fi.Name;
+
+            TabPage newTab = new TabPage(fileName);
+            Panel containerPanel = new Panel() { Dock = DockStyle.Fill };
+
+            CustomListView newListView = new CustomListView();
+            newListView.Dock = DockStyle.Fill;
+            newListView.View = View.Details;
+            newListView.Font = new Font("Consolas", 10F);
+            newListView.GridLines = true;
+            newListView.FullRowSelect = true;
+            newListView.HideSelection = false;
+            newListView.OwnerDraw = false;
+
+            newListView.Columns.Add("Offset", 110, HorizontalAlignment.Left);
+            newListView.Columns.Add("Hex Data", 520, HorizontalAlignment.Left);
+            newListView.Columns.Add("Decoded Text", -2, HorizontalAlignment.Left);
+
+            newListView.DrawColumnHeader += (s, e) => e.DrawDefault = true;
+            newListView.DrawItem += (s, e) => {
+                if (!newListView.OwnerDraw) e.DrawDefault = true;
+            };
+
+            newListView.DrawSubItem += (s, e) => {
+                if (!newListView.OwnerDraw)
+                {
+                    e.DrawDefault = true;
+                    return;
+                }
+
+                if (tabControlFiles?.SelectedTab == null || !openedTabs.ContainsKey(tabControlFiles.SelectedTab))
+                {
+                    e.DrawDefault = true;
+                    return;
+                }
+
+                var currentTabInfo = openedTabs[tabControlFiles.SelectedTab];
+                if (!currentTabInfo.IsRegexHighlightActive || string.IsNullOrEmpty(currentTabInfo.CurrentSearchKeyword) || e.ColumnIndex == 0)
+                {
+                    e.DrawDefault = true;
+                    return;
+                }
+
+                string text = e.SubItem.Text;
+                string keyword = currentTabInfo.CurrentSearchKeyword.Trim();
+
+                int matchIndex = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+
+                bool isSelected = (e.ItemState & ListViewItemStates.Selected) != 0;
+                Color backColor = isSelected ? SystemColors.Highlight : e.SubItem.BackColor;
+                Color textColor = isSelected ? SystemColors.HighlightText : e.SubItem.ForeColor;
+
+                using (SolidBrush bgBrush = new SolidBrush(backColor))
+                {
+                    e.Graphics.FillRectangle(bgBrush, e.Bounds);
+                }
+
+                if (matchIndex < 0)
+                {
+                    TextRenderer.DrawText(e.Graphics, text, newListView.Font, new Point(e.Bounds.X + 2, e.Bounds.Y + 2), textColor, TextFormatFlags.NoPadding);
+                    return;
+                }
+
+                using (Font fontBold = new Font(newListView.Font, FontStyle.Bold))
+                {
+                    string prefix = text.Substring(0, matchIndex);
+                    string matchText = text.Substring(matchIndex, keyword.Length);
+                    string suffix = text.Substring(matchIndex + keyword.Length);
+
+                    int prefixWidth = TextRenderer.MeasureText(e.Graphics, prefix, newListView.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+                    int matchWidth = TextRenderer.MeasureText(e.Graphics, matchText, fontBold, Size.Empty, TextFormatFlags.NoPadding).Width;
+
+                    Rectangle highlightRect = new Rectangle(e.Bounds.X + prefixWidth + 2, e.Bounds.Y + 1, matchWidth + 2, e.Bounds.Height - 2);
+
+                    using (SolidBrush yellowBrush = new SolidBrush(Color.Yellow))
+                    {
+                        e.Graphics.FillRectangle(yellowBrush, highlightRect);
+                    }
+                    using (Pen redPen = new Pen(Color.Red, 1.5f))
+                    {
+                        e.Graphics.DrawRectangle(redPen, highlightRect);
+                    }
+
+                    TextRenderer.DrawText(e.Graphics, prefix, newListView.Font, new Point(e.Bounds.X + 2, e.Bounds.Y + 2), textColor, TextFormatFlags.NoPadding);
+                    TextRenderer.DrawText(e.Graphics, matchText, fontBold, new Point(e.Bounds.X + prefixWidth + 3, e.Bounds.Y + 2), Color.Red, TextFormatFlags.NoPadding);
+                    TextRenderer.DrawText(e.Graphics, suffix, newListView.Font, new Point(e.Bounds.X + prefixWidth + matchWidth + 4, e.Bounds.Y + 2), textColor, TextFormatFlags.NoPadding);
+                }
+            };
+
+            VScrollBar vScroll = new VScrollBar();
+            vScroll.Name = "vScroll";
+            vScroll.Dock = DockStyle.Right;
+            vScroll.Minimum = 0;
+            vScroll.Maximum = VIRTUAL_SCROLL_SCALE;
+            vScroll.SmallChange = 500;
+            vScroll.LargeChange = 2000;
+
+            containerPanel.Controls.Add(newListView);
+            containerPanel.Controls.Add(vScroll);
+            newTab.Controls.Add(containerPanel);
+
+            FileTabInfo tabInfo = new FileTabInfo
+            {
+                FilePath = filePath,
+                FileLength = fileLength,
+                DisplayGrid = newListView,
+                VirtualScrollBar = vScroll
+            };
+            openedTabs.Add(newTab, tabInfo);
+
+            newListView.MouseWheel += (s, e) => {
+                int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
+                long totalLines = GetMaxScrollableLineIndex(tabInfo);
+                if (totalLines <= 0) return;
+
+                int linesToScroll = (e.Delta / 120) * 3;
+                double stepVal = ((double)linesToScroll / totalLines) * maxScrollVal;
+
+                int newValue = vScroll.Value - (int)Math.Round(stepVal);
+                if (newValue < vScroll.Minimum) newValue = vScroll.Minimum;
+                if (newValue > maxScrollVal) newValue = maxScrollVal;
+
+                vScroll.Value = newValue;
+                long computedLine = (long)Math.Round((double)vScroll.Value / maxScrollVal * totalLines);
+                RenderVirtualPageStream(tabInfo, computedLine);
+            };
+
+            vScroll.Scroll += (s, e) => {
+                int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
+                long totalLines = GetMaxScrollableLineIndex(tabInfo);
+
+                int val = e.NewValue;
+                if (val < vScroll.Minimum) val = vScroll.Minimum;
+                if (val > maxScrollVal) val = maxScrollVal;
+
+                long computedLine = (long)Math.Round((double)val / maxScrollVal * totalLines);
+                RenderVirtualPageStream(tabInfo, computedLine);
+            };
+
+            if (tabControlFiles != null)
+            {
+                tabControlFiles.TabPages.Add(newTab);
+                tabControlFiles.SelectedTab = newTab;
+            }
+
+            if (fileListBox != null)
+            {
+                fileListBox.Items.Add(fileName);
+            }
+
+            RenderVirtualPageStream(tabInfo, 0);
+            WriteOutputLog($"Successfully opened: {fileName}");
+        }
+
+        private void ProcessZipFile(string zipFilePath)
+        {
+            try
+            {
+                string tempFolder = Path.Combine(Path.GetTempPath(), "LogFormatter_ZipTemp", Guid.NewGuid().ToString("N"));
+
+                if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
+                Directory.CreateDirectory(tempFolder);
+
+                ZipFile.ExtractToDirectory(zipFilePath, tempFolder);
+
+                DirectoryInfo tempDir = new DirectoryInfo(tempFolder);
+                FileInfo[] logFiles = tempDir.GetFiles("*.log", SearchOption.AllDirectories);
+
+                if (logFiles.Length == 0)
+                {
+                    WriteOutputLog($"No valid files found inside '{Path.GetFileName(zipFilePath)}'.");
+                    return;
+                }
+
+                foreach (FileInfo fileInfo in logFiles)
+                {
+                    AddFileToTab(fileInfo.FullName);
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteOutputLog($"Failed to extract '{Path.GetFileName(zipFilePath)}': {ex.Message}");
+            }
+        }
+
+        private void ExecuteSafeFolderScan()
+        {
+            using (var dialog = new CommonOpenFileDialog())
+            {
+                dialog.IsFolderPicker = true;
+                dialog.Title = "Choose Folder";
+                dialog.EnsurePathExists = true;
+
+                if (dialog.ShowDialog() == CommonFileDialogResult.Ok)
+                {
+                    try
+                    {
+                        string targetDirectory = dialog.FileName;
+
+                        if (!string.IsNullOrEmpty(targetDirectory) && Directory.Exists(targetDirectory))
+                        {
+                            DirectoryInfo di = new DirectoryInfo(targetDirectory);
+                            string[] searchPatterns = { "*.log", "*.bin" };
+                            List<FileInfo> filteredFiles = new List<FileInfo>();
+
+                            foreach (string pattern in searchPatterns)
+                            {
+                                filteredFiles.AddRange(di.GetFiles(pattern, SearchOption.AllDirectories));
+                            }
+
+                            if (filteredFiles.Count == 0)
+                            {
+                                WriteOutputLog($"No valid files found in '{targetDirectory}'.");
+                                return;
+                            }
+
+                            foreach (FileInfo fileInfo in filteredFiles)
+                            {
+                                AddFileToTab(fileInfo.FullName);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(ex.Message, "Error");
+                    }
+                }
+            }
+        }
+
+        private void SaveButton_Click(object sender, EventArgs e)
+        {
+            var modifiedTabs = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
+            if (modifiedTabs.Count == 0)
+            {
+                MessageBox.Show("No edited files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            ExecuteSaveWorkflow(modifiedTabs);
+        }
+
+        private bool ExecuteSaveWorkflow(List<FileTabInfo> targetTabs)
+        {
+            if (targetTabs == null || targetTabs.Count == 0) return true;
+
+            using (SaveModeDialog modeDlg = new SaveModeDialog())
+            {
+                if (modeDlg.ShowDialog(this) != DialogResult.OK || modeDlg.UserChoice == SaveModeDialog.SaveChoice.Cancel)
+                {
+                    return false;
+                }
+
+                bool isOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
+                int savedCount = 0;
+
+                foreach (var tabInfo in targetTabs)
+                {
+                    string currentFileName = Path.GetFileName(tabInfo.FilePath);
+                    try
+                    {
+                        string targetPath = tabInfo.FilePath;
+
+                        if (!isOverwrite)
+                        {
+                            using (SaveFileDialog sfd = new SaveFileDialog())
+                            {
+                                sfd.Title = $"Save As - {currentFileName}";
+                                sfd.Filter = "Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|All Files (*.*)|*.*";
+                                sfd.InitialDirectory = Path.GetDirectoryName(tabInfo.FilePath);
+                                sfd.FileName = Path.GetFileNameWithoutExtension(tabInfo.FilePath) + "_trimmed" + Path.GetExtension(tabInfo.FilePath);
+
+                                if (sfd.ShowDialog(this) == DialogResult.OK)
+                                {
+                                    targetPath = sfd.FileName;
+                                }
+                                else
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        string tempPath = targetPath + ".tmp";
+                        using (FileStream src = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
+                        {
+                            byte[] buffer = new byte[8192];
+                            long bytesLeft = tabInfo.FileLength;
+                            while (bytesLeft > 0)
+                            {
+                                int read = src.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesLeft));
+                                if (read <= 0) break;
+                                dst.Write(buffer, 0, read);
+                                bytesLeft -= read;
+                            }
+                        }
+
+                        if (isOverwrite)
+                        {
+                            File.Delete(tabInfo.FilePath);
+                            File.Move(tempPath, tabInfo.FilePath);
+                        }
+                        else
+                        {
+                            if (File.Exists(targetPath)) File.Delete(targetPath);
+                            File.Move(tempPath, targetPath);
+                        }
+
+                        savedCount++;
+                        WriteOutputLog($"Saved: {Path.GetFileName(targetPath)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteOutputLog($"Failed for {currentFileName}: {ex.Message}");
+                    }
+                }
+
+                return true;
+            }
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            var modifiedList = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
+            if (modifiedList.Count > 0)
+            {
+                var result = MessageBox.Show($"You have {modifiedList.Count} edited file. Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes)
+                {
+                    if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
+                }
+                else if (result == DialogResult.Cancel)
+                {
+                    e.Cancel = true;
+                }
+            }
+        }
+
+        private long GetMaxScrollableLineIndex(FileTabInfo tabInfo)
+        {
+            long totalFileLines = (long)Math.Ceiling((double)tabInfo.FileLength / BYTES_PER_LINE);
+            return Math.Max(0, totalFileLines - 1);
+        }
+
+        private bool ParseInputToBytePattern(string input, out List<byte?> bytePattern, out bool isWildcardRegex)
+        {
+            bytePattern = new List<byte?>();
+            isWildcardRegex = false;
+
+            string[] tokens = input.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length == 0) return false;
+
+            foreach (var token in tokens)
+            {
+                if (token == "." || token == ".." || token == "??")
+                {
+                    bytePattern.Add(null);
+                    isWildcardRegex = true;
+                }
+                else if (byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out byte bVal))
+                {
+                    bytePattern.Add(bVal);
+                }
+                else
+                {
+                    bytePattern.Clear();
+                    return false;
+                }
+            }
+
+            return bytePattern.Count > 0;
+        }
+
+        private async void FindButton_Click(object sender, EventArgs e)
+        {
+            if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
+            {
+                MessageBox.Show("Please enter a word search!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+            TabPage currentTab = tabControlFiles.SelectedTab;
+
+            if (!openedTabs.ContainsKey(currentTab)) return;
+            var tabInfo = openedTabs[currentTab];
+
+            tabInfo.SelectedPingLineIndex = -1;
+            tabInfo.CurrentSearchKeyword = "";
+
+            // Đảm bảo tắt OwnerDraw để không gây đơ giao diện
+            if (tabInfo.DisplayGrid != null)
+            {
+                tabInfo.DisplayGrid.OwnerDraw = false;
+            }
+
+            string rawInput = searchTextBox.Text.Trim();
+
+            searchCts?.Cancel();
+            searchCts = new CancellationTokenSource();
+
+            Control btn = (Control)sender;
+            if (btn != null) btn.Enabled = false;
+
+            if (!ParseInputToBytePattern(rawInput, out List<byte?> targetPattern, out bool isRegexWildcard))
+            {
+                MessageBox.Show("Invalid format!", "Invalid Input", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (btn != null) btn.Enabled = true;
+                return;
+            }
+
+            tabInfo.CurrentSearchKeyword = rawInput;
+
+            if (rtbOutput != null) rtbOutput.Clear();
+
+            try
+            {
+                var searchResults = await Task.Run(() =>
+                {
+                    var results = new List<SearchResultItem>();
+                    Encoding shiftJis = Encoding.GetEncoding("Shift-JIS");
+
+                    FileInfo fi = new FileInfo(tabInfo.FilePath);
+                    tabInfo.FileLength = fi.Length;
+
+                    long totalLines = (long)Math.Ceiling((double)tabInfo.FileLength / BYTES_PER_LINE);
+                    byte[] buffer = new byte[BYTES_PER_LINE];
+
+                    // CHỐNG ĐƠ 1: Giới hạn tối đa 1,000 kết quả tìm thấy để bảo vệ bộ nhớ
+                    const int MAX_RESULTS_LIMIT = 1000;
+
+                    using (FileStream fs = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    {
+                        if (isRegexWildcard)
+                        {
+                            long currentLineIndex = 0;
+                            int bytesRead;
+                            while ((bytesRead = fs.Read(buffer, 0, BYTES_PER_LINE)) > 0)
+                            {
+                                searchCts.Token.ThrowIfCancellationRequested();
+                                long currentByteOffset = fs.Position - bytesRead;
+
+                                bool isMatched = false;
+                                if (targetPattern.Count <= bytesRead)
+                                {
+                                    for (int i = 0; i <= bytesRead - targetPattern.Count; i++)
+                                    {
+                                        bool matchAtOffset = true;
+                                        for (int j = 0; j < targetPattern.Count; j++)
+                                        {
+                                            if (targetPattern[j].HasValue && buffer[i + j] != targetPattern[j].Value)
+                                            {
+                                                matchAtOffset = false;
+                                                break;
+                                            }
+                                        }
+
+                                        if (matchAtOffset) { isMatched = true; break; }
+                                    }
+                                }
+
+                                if (isMatched)
+                                {
+                                    List<string> hexChunks = new List<string>();
+                                    for (int k = 0; k < bytesRead; k++) hexChunks.Add(buffer[k].ToString("X2"));
+
+                                    results.Add(new SearchResultItem
+                                    {
+                                        LineIndex = currentLineIndex,
+                                        Offset = currentByteOffset.ToString("X8"),
+                                        HexData = string.Join(" ", hexChunks),
+                                        DecodedText = shiftJis.GetString(buffer, 0, bytesRead),
+                                        MatchedInHex = true
+                                    });
+
+                                    // Dừng quét ngay khi đủ 1,000 kết quả để tránh nghẽn
+                                    if (results.Count >= MAX_RESULTS_LIMIT) break;
+                                }
+
+                                currentLineIndex++;
+                            }
+                        }
+                        else
+                        {
+                            for (long lineIdx = totalLines - 1; lineIdx >= 0; lineIdx--)
+                            {
+                                searchCts.Token.ThrowIfCancellationRequested();
+
+                                long currentByteOffset = lineIdx * BYTES_PER_LINE;
+                                fs.Seek(currentByteOffset, SeekOrigin.Begin);
+
+                                int bytesRead = fs.Read(buffer, 0, BYTES_PER_LINE);
+                                if (bytesRead <= 0) continue;
+
+                                if (targetPattern.Count <= bytesRead)
+                                {
+                                    for (int i = bytesRead - targetPattern.Count; i >= 0; i--)
+                                    {
+                                        bool match = true;
+                                        for (int j = 0; j < targetPattern.Count; j++)
+                                        {
+                                            if (targetPattern[j].HasValue && buffer[i + j] != targetPattern[j].Value)
+                                            {
+                                                match = false;
+                                                break;
+                                            }
+                                        }
+
+                                        if (match)
+                                        {
+                                            int matchEndByteIndex = i + targetPattern.Count;
+                                            long matchedByteCutoff = currentByteOffset + matchEndByteIndex;
+
+                                            tabInfo.FileLength = matchedByteCutoff;
+
+                                            List<string> hexChunks = new List<string>();
+                                            for (int k = 0; k < matchEndByteIndex; k++) hexChunks.Add(buffer[k].ToString("X2"));
+
+                                            results.Add(new SearchResultItem
+                                            {
+                                                LineIndex = lineIdx,
+                                                Offset = currentByteOffset.ToString("X8"),
+                                                HexData = string.Join(" ", hexChunks),
+                                                DecodedText = shiftJis.GetString(buffer, 0, matchEndByteIndex),
+                                                MatchedInHex = true
+                                            });
+
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (results.Count > 0) break;
+                            }
+                        }
+                    }
+
+                    return results;
+                }, searchCts.Token);
+
+                if (searchResults.Count == 0)
+                {
+                    RenderVirtualPageStream(tabInfo, 0);
+                    MessageBox.Show($"No result for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                // CHỐNG ĐƠ 2: Gộp dữ liệu trong bộ nhớ và ghi ra ô Log 1 lần duy nhất
+                if (rtbOutput != null)
+                {
+                    if (isRegexWildcard)
+                    {
+                        WriteOutputLog($" Matched {searchResults.Count} item(s) for '{rawInput}':");
+
+                        StringBuilder sb = new StringBuilder();
+                        foreach (var res in searchResults)
+                        {
+                            sb.AppendLine($"[Offset:{res.Offset}] {res.HexData}");
+                        }
+
+                        rtbOutput.AppendText(sb.ToString());
+                        rtbOutput.ScrollToCaret();
+                    }
+                    else
+                    {
+                        WriteOutputLog($"[Offset:{searchResults[0].Offset}] {searchResults[0].HexData}");
+                    }
+                }
+
+                NavigateToLine(tabInfo, searchResults[0].LineIndex);
+            }
+            catch (OperationCanceledException)
+            {
+                WriteOutputLog("Cancelled.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Search Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (btn != null) btn.Enabled = true;
+            }
+        }
+
+        private void NavigateToLine(FileTabInfo tabInfo, long targetLineIndex)
+        {
+            tabInfo.SelectedPingLineIndex = targetLineIndex;
+
+            long totalLines = GetMaxScrollableLineIndex(tabInfo);
+            if (tabInfo.VirtualScrollBar != null && totalLines > 0)
+            {
+                int maxScrollVal = tabInfo.VirtualScrollBar.Maximum - tabInfo.VirtualScrollBar.LargeChange + 1;
+                double ratio = (double)targetLineIndex / totalLines;
+                tabInfo.VirtualScrollBar.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
+            }
+
+            long startViewIndex = Math.Max(0, targetLineIndex - 2);
+            RenderVirtualPageStream(tabInfo, startViewIndex);
+        }
+
+        private void RtbOutput_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (rtbOutput == null || string.IsNullOrEmpty(rtbOutput.Text)) return;
+
+            try
+            {
+                int charIndex = rtbOutput.GetCharIndexFromPosition(e.Location);
+                int lineIndex = rtbOutput.GetLineFromCharIndex(charIndex);
+                if (lineIndex < 0 || lineIndex >= rtbOutput.Lines.Length) return;
+
+                string currentLineText = rtbOutput.Lines[lineIndex];
+
+                Match m = Regex.Match(currentLineText, @"\[Offset:([0-9A-Fa-f]+)\]");
+
+                if (m.Success)
+                {
+                    string hexOffsetStr = m.Groups[1].Value;
+                    long byteOffset = Convert.ToInt64(hexOffsetStr, 16);
+
+                    long targetLineIndex = byteOffset / BYTES_PER_LINE;
+
+                    if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+                    TabPage currentTab = tabControlFiles.SelectedTab;
+                    if (!openedTabs.ContainsKey(currentTab)) return;
+                    var tabInfo = openedTabs[currentTab];
+
+                    NavigateToLine(tabInfo, targetLineIndex);
+                }
+            }
+            catch { }
+        }
+
+        private void RenderVirtualPageStream(FileTabInfo tabInfo, long startIndex)
+        {
+            if (tabInfo == null || tabInfo.DisplayGrid == null || !File.Exists(tabInfo.FilePath)) return;
+
+            ListView lv = tabInfo.DisplayGrid;
+            lv.BeginUpdate();
+            lv.Items.Clear();
+
+            System.Text.Encoding encodingNhat = System.Text.Encoding.GetEncoding("Shift-JIS");
+            byte[] buffer = new byte[BYTES_PER_LINE];
+
+            try
+            {
+                using (FileStream fs = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    for (int i = 0; i < MAX_DISPLAY_LINES; i++)
+                    {
+                        long currentLineIndex = startIndex + i;
+                        long exactLineOffset = currentLineIndex * BYTES_PER_LINE;
+
+                        if (exactLineOffset >= tabInfo.FileLength) break;
+
+                        fs.Seek(exactLineOffset, SeekOrigin.Begin);
+
+                        int bytesToRead = BYTES_PER_LINE;
+                        if (exactLineOffset + bytesToRead > tabInfo.FileLength)
+                        {
+                            bytesToRead = (int)(tabInfo.FileLength - exactLineOffset);
+                        }
+
+                        int bytesRead = fs.Read(buffer, 0, bytesToRead);
+                        if (bytesRead <= 0) break;
+
+                        string offsetStr = exactLineOffset.ToString("X8");
+                        List<string> hexChunks = new List<string>();
+                        for (int k = 0; k < bytesRead; k++) hexChunks.Add(buffer[k].ToString("X2"));
+                        string hexStr = string.Join(" ", hexChunks);
+
+                        string rawText = encodingNhat.GetString(buffer, 0, bytesRead);
+                        string cleanText = "";
+                        foreach (char c in rawText) cleanText += (c != '\0' && !char.IsControl(c)) ? c : '.';
+
+                        ListViewItem item = new ListViewItem(offsetStr);
+                        item.SubItems.Add(hexStr);
+                        item.SubItems.Add(cleanText);
+
+                        if (tabInfo.SelectedPingLineIndex != -1 && currentLineIndex == tabInfo.SelectedPingLineIndex)
+                        {
+                            item.Selected = true;
+                            item.Focused = true;
+                        }
+
+                        lv.Items.Add(item);
+                    }
+                }
+            }
+            catch { }
+            lv.EndUpdate();
+        }
+
+        private void WriteOutputLog(string content)
+        {
+            if (rtbOutput == null) return;
+            if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
+
+            Color msgColor = Color.LightGray;
+            if (content.Contains("[Folder Scan]") || content.Contains("Successfully") || content.Contains("[Truncated Success]") || content.Contains("[Found Regex]") || content.Contains("[ZIP Success]"))
+                msgColor = Color.LimeGreen;
+            else if (content.Contains("Error") || content.Contains("Fail"))
+                msgColor = Color.Tomato;
+
+            rtbOutput.SelectionStart = rtbOutput.Text.Length;
+            rtbOutput.SelectionLength = 0;
+            rtbOutput.SelectionColor = Color.Gray;
+            rtbOutput.AppendText($"[{DateTime.Now:HH:mm:ss}] ");
+            rtbOutput.SelectionColor = msgColor;
+            rtbOutput.AppendText(content + "\n");
+            rtbOutput.ScrollToCaret();
+        }
+
+        private void OpenButton_Click(object sender, EventArgs e)
+        {
+            if (openButton != null && openButton.ContextMenuStrip != null)
+                openButton.ContextMenuStrip.Show(openButton, new Point(0, openButton.Height));
+            else if (mainPopupMenu != null)
+                mainPopupMenu.Show(openButton, new Point(0, openButton.Height));
+        }
+
+        private void SelectFilesMenuItem_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Title = "Open Files";
+                ofd.Filter = "Supported Files (*.log; *.bin; *.zip)|*.log;*.bin;*.zip|Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|Zip Files (*.zip)|*.zip|All Files (*.*)|*.*";
+                ofd.Multiselect = true;
+                ofd.RestoreDirectory = true;
+
+                if (ofd.ShowDialog(this) == DialogResult.OK)
+                {
+                    foreach (string file in ofd.FileNames) AddFileToTab(file);
+                }
+            }
+        }
+
+        private void SelectFolderMenuItem_Click(object sender, EventArgs e)
+        {
+            ExecuteSafeFolderScan();
+        }
+
+        private void FileListBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (fileListBox == null || fileListBox.SelectedItem == null) return;
+            string selectedFileName = fileListBox.SelectedItem.ToString();
+
+            if (tabControlFiles != null)
+            {
+                foreach (TabPage tab in tabControlFiles.TabPages)
+                {
+                    if (tab.Text == selectedFileName)
+                    {
+                        tabControlFiles.SelectedTab = tab;
+
+                        if (openedTabs.ContainsKey(tab))
+                        {
+                            var tabInfo = openedTabs[tab];
+                            if (tabInfo.SelectedPingLineIndex >= 0)
+                            {
+                                NavigateToLine(tabInfo, tabInfo.SelectedPingLineIndex);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void TabControlFiles_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            try
+            {
+                if (tabControlFiles == null || e.Index < 0 || e.Index >= tabControlFiles.TabCount) return;
+
+                TabPage tab = tabControlFiles.TabPages[e.Index];
+                Rectangle tabRect = tabControlFiles.GetTabRect(e.Index);
+
+                // Tô nền Tab (Active màu Trắng, Inactive màu Xám nhạt)
+                if (e.State == DrawItemState.Selected)
+                    e.Graphics.FillRectangle(Brushes.White, tabRect);
+                else
+                    e.Graphics.FillRectangle(Brushes.LightGray, tabRect);
+
+                Font fontTab = new Font("Segoe UI", 9, FontStyle.Regular);
+
+                Point textLocation = new Point(tabRect.X + 8, tabRect.Y + 5);
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    tab.Text,
+                    fontTab,
+                    textLocation,
+                    Color.Black,
+                    TextFormatFlags.NoClipping // Bắt buộc hiện FULL 100% tên file, không cắt xén!
+                );
+
+                // 2. Vẽ Dấu X màu đỏ (Nằm sát mép phải Tab, căn lề chuẩn đét)
+                e.Graphics.DrawString("X", fontTab, Brushes.Red, tabRect.Right - 18, tabRect.Y + 4);
+            }
+            catch { }
+        }
+
+        private void TabControlFiles_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (tabControlFiles == null) return;
+            for (int i = 0; i < tabControlFiles.TabCount; i++)
+            {
+                Rectangle tabRect = tabControlFiles.GetTabRect(i);
+
+                // Vùng bấm dấu X: Lấy 20px tính từ mép phải của Tab
+                Rectangle xRect = new Rectangle(tabRect.Right - 20, tabRect.Y, 20, tabRect.Height);
+                if (xRect.Contains(e.Location))
+                {
+                    CloseTabInfo(tabControlFiles.TabPages[i]);
+                    break;
+                }
+            }
+        }
+
+        private void CloseTabInfo(TabPage tab)
+        {
+            if (tab == null || !openedTabs.ContainsKey(tab)) return;
+
+            var tabInfo = openedTabs[tab];
+            if (File.Exists(tabInfo.FilePath))
+            {
+                FileInfo fi = new FileInfo(tabInfo.FilePath);
+                if (tabInfo.FileLength != fi.Length)
+                {
+                    var result = MessageBox.Show($"File '{tab.Text}' was edited. Save before closing?", "Unsaved File", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+                    if (result == DialogResult.Yes)
+                    {
+                        if (!ExecuteSaveWorkflow(new List<FileTabInfo> { tabInfo })) return;
+                    }
+                    else if (result == DialogResult.Cancel)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            string fileName = tab.Text;
+            if (fileListBox != null) fileListBox.Items.Remove(fileName);
+            openedTabs.Remove(tab);
+            if (tabControlFiles != null) tabControlFiles.TabPages.Remove(tab);
+        }
+
+        private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
+
+    }
+
+    public class SaveSelectionForm : Form
+    {
+        private CheckedListBox checkedListBox;
+        private Button btnOk;
+        private Button btnCancel;
+        private Button btnSelectAll;
+
+        public List<string> SelectedFileNames { get; private set; } = new List<string>();
+
+        public SaveSelectionForm(List<string> fileNames)
+        {
+            this.Text = "Select Modified Files To Save";
+            this.Size = new Size(420, 350);
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+
+            Label lblTitle = new Label
+            {
+                Text = "Select modified files to save:",
+                Location = new Point(12, 10),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+            };
+
+            checkedListBox = new CheckedListBox
+            {
+                Location = new Point(12, 32),
+                Size = new Size(380, 200),
+                CheckOnClick = true
+            };
+
+            foreach (var name in fileNames)
+            {
+                checkedListBox.Items.Add(name, true);
+            }
+
+            btnSelectAll = new Button
+            {
+                Text = "Toggle All",
+                Location = new Point(12, 240),
+                Size = new Size(100, 28)
+            };
+            bool allChecked = true;
+            btnSelectAll.Click += (s, e) =>
+            {
+                allChecked = !allChecked;
+                for (int i = 0; i < checkedListBox.Items.Count; i++)
+                {
+                    checkedListBox.SetItemChecked(i, allChecked);
+                }
+            };
+
+            btnOk = new Button
+            {
+                Text = "OK",
+                DialogResult = DialogResult.OK,
+                Location = new Point(236, 240),
+                Size = new Size(75, 28)
+            };
+            btnOk.Click += (s, e) =>
+            {
+                foreach (var item in checkedListBox.CheckedItems)
+                {
+                    SelectedFileNames.Add(item.ToString());
+                }
+            };
+
+            btnCancel = new Button
+            {
+                Text = "Cancel",
+                DialogResult = DialogResult.Cancel,
+                Location = new Point(317, 240),
+                Size = new Size(75, 28)
+            };
+
+            this.Controls.Add(lblTitle);
+            this.Controls.Add(checkedListBox);
+            this.Controls.Add(btnSelectAll);
+            this.Controls.Add(btnOk);
+            this.Controls.Add(btnCancel);
+            this.AcceptButton = btnOk;
+            this.CancelButton = btnCancel;
+        }
+    }
+
+    public class SaveModeDialog : Form
+    {
+        public enum SaveChoice { SaveOverwrite, SaveAsNew, Cancel }
+        public SaveChoice UserChoice { get; private set; } = SaveChoice.Cancel;
+
+        public SaveModeDialog()
+        {
+            this.Text = "Select Save Mode";
+            this.Size = new Size(380, 160);
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+
+            Label lblMsg = new Label
+            {
+                Text = "How do you want to save the selected files?",
+                Location = new Point(20, 20),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Regular)
+            };
+
+            Button btnSave = new Button
+            {
+                Text = "Save (Overwrite)",
+                Location = new Point(20, 65),
+                Size = new Size(115, 32)
+            };
+            btnSave.Click += (s, e) => { UserChoice = SaveChoice.SaveOverwrite; this.DialogResult = DialogResult.OK; };
+
+            Button btnSaveAs = new Button
+            {
+                Text = "Save As...",
+                Location = new Point(141, 65),
+                Size = new Size(125, 32)
+            };
+            btnSaveAs.Click += (s, e) => { UserChoice = SaveChoice.SaveAsNew; this.DialogResult = DialogResult.OK; };
+
+            Button btnCancel = new Button
+            {
+                Text = "Cancel",
+                Location = new Point(272, 65),
+                Size = new Size(75, 32)
+            };
+            btnCancel.Click += (s, e) => { UserChoice = SaveChoice.Cancel; this.DialogResult = DialogResult.Cancel; };
+
+            this.Controls.Add(lblMsg);
+            this.Controls.Add(btnSave);
+            this.Controls.Add(btnSaveAs);
+            this.Controls.Add(btnCancel);
+        }
+    }
+}
