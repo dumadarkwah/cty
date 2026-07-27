@@ -69,6 +69,7 @@ namespace LogFormatter
         private const int VIRTUAL_SCROLL_SCALE = 1000000;
         private static readonly Encoding ShiftJisEncoding = Encoding.GetEncoding("Shift-JIS");
         private CancellationTokenSource searchCts;
+        private TabPage searchingTab = null;
 
         public Form1()
         {
@@ -257,7 +258,7 @@ namespace LogFormatter
             }
 
             RenderVirtualPageStream(tabInfo, 0);
-            WriteOutputLog($"Successfully opened: {fileName}");
+            WriteOutputLog($"Opened: {fileName}");
         }
 
         private void RenderVirtualPageStream(FileTabInfo tabInfo, long startIndex)
@@ -341,7 +342,7 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Render Error: {ex.Message}");
+                WriteOutputLog($"Render error: {ex.Message}");
             }
 
             lv.EndUpdate();
@@ -368,7 +369,7 @@ namespace LogFormatter
                         string destinationPath = Path.GetFullPath(Path.Combine(tempFolder, entry.FullName));
                         if (!destinationPath.StartsWith(Path.GetFullPath(tempFolder), StringComparison.OrdinalIgnoreCase))
                         {
-                            throw new Exception("Security Violation: Zip Slip vulnerability detected!");
+                            throw new Exception("Security Error: Zip Slip detected.");
                         }
 
                         if (!string.IsNullOrEmpty(entry.Name))
@@ -386,7 +387,7 @@ namespace LogFormatter
 
                 if (targetFiles.Count == 0)
                 {
-                    WriteOutputLog($"No valid .log or .bin files found inside '{Path.GetFileName(zipFilePath)}'.");
+                    WriteOutputLog($"No log/bin files in '{Path.GetFileName(zipFilePath)}'.");
                     Directory.Delete(tempFolder, true);
                     return;
                 }
@@ -398,7 +399,7 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Failed to process Zip file '{Path.GetFileName(zipFilePath)}': {ex.Message}");
+                WriteOutputLog($"ZIP error: {ex.Message}");
             }
         }
 
@@ -419,7 +420,7 @@ namespace LogFormatter
                         if (!string.IsNullOrEmpty(targetDirectory) && Directory.Exists(targetDirectory))
                         {
                             DirectoryInfo di = new DirectoryInfo(targetDirectory);
-                            string[] searchPatterns = { "*.log", "*.bin" };
+                            string[] searchPatterns = { "*.log", "*.bin", "*.zip" }; // ✅ thêm "*.zip"
                             List<FileInfo> filteredFiles = new List<FileInfo>();
 
                             foreach (string pattern in searchPatterns)
@@ -435,7 +436,7 @@ namespace LogFormatter
 
                             foreach (FileInfo fileInfo in filteredFiles)
                             {
-                                AddFileToTab(fileInfo.FullName);
+                                AddFileToTab(fileInfo.FullName);   // .zip sẽ tự động route sang ProcessZipFile bên trong
                             }
                         }
                     }
@@ -449,10 +450,16 @@ namespace LogFormatter
 
         private void SaveButton_Click(object sender, EventArgs e)
         {
+            if (searchingTab != null)
+            {
+                MessageBox.Show("Search in progress. Please wait or cancel first.", "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             var modifiedTabs = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
             if (modifiedTabs.Count == 0)
             {
-                MessageBox.Show("No edited/shaped files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("No edited files to save.", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -483,7 +490,7 @@ namespace LogFormatter
 
                         if (isZipExtractedFile && isOverwrite)
                         {
-                            MessageBox.Show($"'{currentFileName}' was extracted from a ZIP archive. Overwriting temporary files is not allowed.\nPlease select a permanent save location.",
+                            MessageBox.Show($"'{currentFileName}' is from ZIP. Overwrite disallowed.\nPlease select Save As location.",
                                 "Save Action Redirected", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             isOverwrite = false;
                         }
@@ -531,7 +538,7 @@ namespace LogFormatter
                             File.Delete(tabInfo.FilePath);
                             File.Move(tempPath, tabInfo.FilePath);
                             tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
-                            WriteOutputLog($"Saved successfully: {newFileName}");
+                            WriteOutputLog($"Saved: {newFileName}");
                         }
                         else
                         {
@@ -561,12 +568,12 @@ namespace LogFormatter
                                 }
                             }
 
-                            WriteOutputLog($"Saved successfully to: {targetPath}. Tab now points to this new file.");
+                            WriteOutputLog($"Saved as: {targetPath}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        WriteOutputLog($"Failed to save {currentFileName}: {ex.Message}");
+                        WriteOutputLog($"Save failed for {currentFileName}: {ex.Message}");
                     }
                 }
 
@@ -579,7 +586,7 @@ namespace LogFormatter
             var modifiedList = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
             if (modifiedList.Count > 0)
             {
-                var result = MessageBox.Show($"You have {modifiedList.Count} edited/shaped file(s). Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                var result = MessageBox.Show($"You have {modifiedList.Count} edited file(s). Save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (result == DialogResult.Yes)
                 {
                     if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
@@ -667,7 +674,7 @@ namespace LogFormatter
         {
             if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
             {
-                MessageBox.Show("Please enter a word or hex pattern to search!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Please enter keyword or hex pattern.", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -681,14 +688,17 @@ namespace LogFormatter
 
             searchCts?.Cancel();
             searchCts = new CancellationTokenSource();
+            searchingTab = currentTab;
 
             Control btn = (Control)sender;
             if (btn != null) btn.Enabled = false;
+            if (saveButton != null) saveButton.Enabled = false;
 
             if (!ParseInputToBytePattern(rawInput, out List<byte?> targetPattern, out bool isRegexWildcard))
             {
-                MessageBox.Show("Invalid search pattern format!", "Invalid Input", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Invalid pattern format.", "Invalid Input", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 if (btn != null) btn.Enabled = true;
+                searchingTab = null;
                 return;
             }
 
@@ -854,9 +864,11 @@ namespace LogFormatter
                     return results;
                 }, searchCts.Token);
 
+                if (!openedTabs.ContainsKey(currentTab)) return;
+
                 if (searchResults.Count == 0)
                 {
-                    MessageBox.Show($"No result found for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show($"No match for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 
@@ -888,15 +900,17 @@ namespace LogFormatter
             }
             catch (OperationCanceledException)
             {
-                WriteOutputLog("Search cancelled by user.");
+                WriteOutputLog("Search cancelled.");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Search Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Search error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
                 if (btn != null) btn.Enabled = true;
+                if (saveButton != null) saveButton.Enabled = true;
+                if (searchingTab == currentTab) searchingTab = null;
             }
         }
 
@@ -947,7 +961,7 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Navigation Error: {ex.Message}");
+                WriteOutputLog($"Nav error: {ex.Message}");
             }
         }
 
@@ -957,9 +971,9 @@ namespace LogFormatter
             if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
 
             Color msgColor = Color.LightGray;
-            if (content.Contains("[Folder Scan]") || content.Contains("Successfully") || content.Contains("Saved") || content.Contains("Matched"))
+            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Matched"))
                 msgColor = Color.LimeGreen;
-            else if (content.Contains("Error") || content.Contains("Failed") || content.Contains("Violation"))
+            else if (content.Contains("Error") || content.Contains("failed") || content.Contains("disallowed"))
                 msgColor = Color.Tomato;
 
             rtbOutput.SelectionStart = rtbOutput.Text.Length;
@@ -1073,10 +1087,10 @@ namespace LogFormatter
         {
             if (tab == null || !openedTabs.ContainsKey(tab)) return;
 
-            // 🛠️ Hủy tác vụ tìm kiếm đang chạy nền nếu đóng đúng Tab này
-            if (tabControlFiles != null && tabControlFiles.SelectedTab == tab)
+            if (tab == searchingTab)
             {
                 searchCts?.Cancel();
+                searchingTab = null;
             }
 
             var tabInfo = openedTabs[tab];
@@ -1086,7 +1100,6 @@ namespace LogFormatter
             openedTabs.Remove(tab);
             if (tabControlFiles != null) tabControlFiles.TabPages.Remove(tab);
 
-            // 🛠️ BỔ SUNG: Giải phóng tài nguyên Win32 Handle tức thì
             tab.Dispose();
         }
 
