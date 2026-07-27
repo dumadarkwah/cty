@@ -59,6 +59,7 @@ namespace LogFormatter
             public long SelectedPingLineIndex { get; set; } = -1;
             public long CurrentViewStartIndex { get; set; } = 0;
             public string TempDirectoryToCleanup { get; set; } = null;
+            public Stack<long> CutoffHistory { get; set; } = new Stack<long>();
         }
 
         private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
@@ -76,6 +77,7 @@ namespace LogFormatter
             InitializeComponent();
 
             this.StartPosition = FormStartPosition.CenterScreen;
+            this.KeyPreview = true;
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
             this.Load += (s, e) => {
@@ -103,9 +105,31 @@ namespace LogFormatter
                     rtbOutput.ReadOnly = true;
                     rtbOutput.MouseClick += RtbOutput_MouseClick;
                 }
+
+                Control[] resetBtns = this.Controls.Find("resetViewButton", true);
+                if (resetBtns.Length > 0 && resetBtns[0] is Button btnReset)
+                {
+                    btnReset.Click += ResetViewButton_Click;
+                }
+
+                Control[] undoBtns = this.Controls.Find("undoFindButton", true);
+                if (undoBtns.Length > 0 && undoBtns[0] is Button btnUndo)
+                {
+                    btnUndo.Click += UndoFindButton_Click;
+                }
             };
 
             this.FormClosing += Form1_FormClosing;
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == (Keys.Control | Keys.Z))
+            {
+                ExecuteUndoFind();
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         private void CleanupOrphanedZipTempFolders()
@@ -355,7 +379,6 @@ namespace LogFormatter
             return Math.Max(0, totalFileLines - 1);
         }
 
-        // 🎯 TỐI ƯU KHÔNG BỊ ĐƠ APP: Đưa việc mở & giải nén file ZIP vào Background Task
         private async Task ProcessZipFileAsync(string zipFilePath)
         {
             string zipName = Path.GetFileName(zipFilePath);
@@ -474,6 +497,63 @@ namespace LogFormatter
             }
         }
 
+        private void ResetViewButton_Click(object sender, EventArgs e)
+        {
+            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+            TabPage currentTab = tabControlFiles.SelectedTab;
+            if (!openedTabs.ContainsKey(currentTab)) return;
+            var tabInfo = openedTabs[currentTab];
+
+            if (currentTab == searchingTab)
+            {
+                MessageBox.Show("Search is currently running on this tab.", "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            tabInfo.ActiveFileCutoff = tabInfo.OriginalFileLength;
+            tabInfo.CutoffHistory.Clear();
+            tabInfo.SelectedPingLineIndex = -1;
+            tabInfo.CurrentViewStartIndex = 0;
+
+            if (tabInfo.VirtualScrollBar != null) tabInfo.VirtualScrollBar.Value = 0;
+
+            RenderVirtualPageStream(tabInfo, 0);
+            WriteOutputLog($"Refreshed: '{Path.GetFileName(tabInfo.FilePath)}' restored to original size ({tabInfo.OriginalFileLength} bytes).", appendExtraSpace: true);
+        }
+
+        private void UndoFindButton_Click(object sender, EventArgs e)
+        {
+            ExecuteUndoFind();
+        }
+
+        private void ExecuteUndoFind()
+        {
+            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+            TabPage currentTab = tabControlFiles.SelectedTab;
+            if (!openedTabs.ContainsKey(currentTab)) return;
+            var tabInfo = openedTabs[currentTab];
+
+            if (currentTab == searchingTab)
+            {
+                MessageBox.Show("Search is currently running on this tab.", "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (tabInfo.CutoffHistory.Count == 0)
+            {
+                WriteOutputLog("Warning: No search history to undo.", appendExtraSpace: true);
+                return;
+            }
+
+            tabInfo.ActiveFileCutoff = tabInfo.CutoffHistory.Pop();
+            tabInfo.SelectedPingLineIndex = -1;
+            tabInfo.CurrentViewStartIndex = 0;
+            if (tabInfo.VirtualScrollBar != null) tabInfo.VirtualScrollBar.Value = 0;
+
+            RenderVirtualPageStream(tabInfo, 0);
+            WriteOutputLog("Restored", appendExtraSpace: true);
+        }
+
         private void SaveButton_Click(object sender, EventArgs e)
         {
             if (searchingTab != null)
@@ -564,6 +644,7 @@ namespace LogFormatter
                             File.Delete(tabInfo.FilePath);
                             File.Move(tempPath, tabInfo.FilePath);
                             tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
+                            tabInfo.CutoffHistory.Clear();
                             WriteOutputLog($"Saved: {newFileName}");
                         }
                         else
@@ -579,6 +660,7 @@ namespace LogFormatter
 
                             tabInfo.FilePath = targetPath;
                             tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
+                            tabInfo.CutoffHistory.Clear();
 
                             if (activeTabKey != null)
                             {
@@ -654,9 +736,9 @@ namespace LogFormatter
             string raw = input.Trim();
             string[] tokens = raw.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
 
-            bool containsExplicitWildcards = tokens.Any(t => t == "??" || t == "?" || t == ".." || t == "*");
+            bool containsExplicitWildcards = tokens.Any(t => t.Contains("?") || t.Contains(".") || t == "*");
             bool isMultiTokenHex = tokens.Length > 1 && tokens.All(t =>
-                t == "??" || t == "?" || t == ".." || t == "*" || byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out _));
+                t.Contains("?") || t.Contains(".") || t == "*" || byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out _));
 
             if (containsExplicitWildcards || isMultiTokenHex)
             {
@@ -665,7 +747,7 @@ namespace LogFormatter
 
                 foreach (var token in tokens)
                 {
-                    if (token == "??" || token == "?" || token == ".." || token == "*")
+                    if (token == "??" || token == "?" || token == ".." || token == "." || token == "*")
                     {
                         hexPattern.Add(null);
                     }
@@ -701,7 +783,7 @@ namespace LogFormatter
         {
             if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
             {
-                WriteOutputLog("Warning: Search pattern is empty.");
+                WriteOutputLog("Warning: Search pattern is empty.", appendExtraSpace: true);
                 return;
             }
 
@@ -722,15 +804,16 @@ namespace LogFormatter
 
             if (!ParseInputToBytePattern(rawInput, out List<byte?> targetPattern))
             {
-                WriteOutputLog($"Error: Invalid input pattern '{rawInput}'.");
+                WriteOutputLog($"Error: Invalid input pattern '{rawInput}'.", appendExtraSpace: true);
                 if (btn != null) btn.Enabled = true;
                 searchingTab = null;
                 return;
             }
 
             tabInfo.CurrentSearchKeyword = rawInput;
+            string fileName = Path.GetFileName(tabInfo.FilePath);
 
-            WriteOutputLog($"Searching for '{rawInput}'...");
+            WriteOutputLog($"Searching for '{rawInput}' in [{fileName}]...");
 
             try
             {
@@ -815,29 +898,30 @@ namespace LogFormatter
 
                 if (searchResults.Count == 0)
                 {
-                    WriteOutputLog($"No match found for '{rawInput}'.");
+                    WriteOutputLog($"No match found for '{rawInput}'.", appendExtraSpace: true);
                     return;
                 }
 
                 if (newCutoffFound.HasValue)
                 {
+                    tabInfo.CutoffHistory.Push(tabInfo.ActiveFileCutoff);
                     tabInfo.ActiveFileCutoff = newCutoffFound.Value;
                 }
 
                 if (rtbOutput != null)
                 {
-                    WriteOutputLog($"[Offset:{searchResults[0].Offset}] {searchResults[0].HexData}");
+                    WriteOutputLog($"[Offset:{searchResults[0].Offset}] {searchResults[0].HexData}", appendExtraSpace: true);
                 }
 
                 NavigateToLine(tabInfo, searchResults[0].LineIndex);
             }
             catch (OperationCanceledException)
             {
-                WriteOutputLog("Search cancelled.");
+                WriteOutputLog("Search cancelled.", appendExtraSpace: true);
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Search error: {ex.Message}");
+                WriteOutputLog($"Search error: {ex.Message}", appendExtraSpace: true);
             }
             finally
             {
@@ -897,10 +981,14 @@ namespace LogFormatter
             }
         }
 
-        private void WriteOutputLog(string content)
+        private void WriteOutputLog(string content, bool appendExtraSpace = false)
         {
             if (rtbOutput == null) return;
-            if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
+            if (rtbOutput.InvokeRequired)
+            {
+                rtbOutput.Invoke(new Action<string, bool>(WriteOutputLog), content, appendExtraSpace);
+                return;
+            }
 
             Color msgColor = Color.LightGray;
             if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Offset:") || content.Contains("Extracting"))
@@ -917,10 +1005,14 @@ namespace LogFormatter
 
             rtbOutput.SelectionStart = rtbOutput.Text.Length;
             rtbOutput.SelectionLength = 0;
+
             rtbOutput.SelectionColor = Color.Gray;
             rtbOutput.AppendText($"[{DateTime.Now:HH:mm:ss}] ");
             rtbOutput.SelectionColor = msgColor;
-            rtbOutput.AppendText(content + "\n");
+
+            string lineEnd = appendExtraSpace ? "\n\n\n" : "\n";
+            rtbOutput.AppendText(content + lineEnd);
+
             rtbOutput.ScrollToCaret();
         }
 
