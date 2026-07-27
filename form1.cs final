@@ -90,8 +90,8 @@ namespace LogFormatter
                 if (tabControlFiles != null)
                 {
                     tabControlFiles.TabPages.Clear();
-                    tabControlFiles.SizeMode = TabSizeMode.Normal;
-                    tabControlFiles.Padding = new Point(22, 6);
+                    tabControlFiles.SizeMode = TabSizeMode.Fixed;
+                    tabControlFiles.ItemSize = new Size(180, 28);
                     tabControlFiles.DrawMode = TabDrawMode.OwnerDrawFixed;
                     tabControlFiles.DrawItem += TabControlFiles_DrawItem;
                     tabControlFiles.MouseDown += TabControlFiles_MouseDown;
@@ -362,32 +362,35 @@ namespace LogFormatter
                 string tempFolder = Path.Combine(Path.GetTempPath(), "LogFormatter_ZipTemp", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(tempFolder);
 
+                List<FileInfo> targetFiles = new List<FileInfo>();
+
                 using (ZipArchive archive = ZipFile.OpenRead(zipFilePath))
                 {
                     foreach (ZipArchiveEntry entry in archive.Entries)
                     {
-                        string destinationPath = Path.GetFullPath(Path.Combine(tempFolder, entry.FullName));
-                        if (!destinationPath.StartsWith(Path.GetFullPath(tempFolder), StringComparison.OrdinalIgnoreCase))
+                        if (string.IsNullOrEmpty(entry.Name)) continue;
+
+                        string entryExt = Path.GetExtension(entry.Name).ToLower();
+                        if (entryExt != ".log" && entryExt != ".bin") continue;
+
+                        string safeName = Path.GetFileName(entry.Name);
+                        string destinationPath = Path.Combine(tempFolder, Guid.NewGuid().ToString("N") + "_" + safeName);
+
+                        string fullTempPath = Path.GetFullPath(tempFolder);
+                        string fullDestPath = Path.GetFullPath(destinationPath);
+                        if (!fullDestPath.StartsWith(fullTempPath, StringComparison.OrdinalIgnoreCase))
                         {
                             throw new Exception("Security Error: Zip Slip detected.");
                         }
 
-                        if (!string.IsNullOrEmpty(entry.Name))
-                        {
-                            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
-                            entry.ExtractToFile(destinationPath, true);
-                        }
+                        entry.ExtractToFile(destinationPath, true);
+                        targetFiles.Add(new FileInfo(destinationPath));
                     }
                 }
 
-                DirectoryInfo tempDir = new DirectoryInfo(tempFolder);
-                List<FileInfo> targetFiles = new List<FileInfo>();
-                targetFiles.AddRange(tempDir.GetFiles("*.log", SearchOption.AllDirectories));
-                targetFiles.AddRange(tempDir.GetFiles("*.bin", SearchOption.AllDirectories));
-
                 if (targetFiles.Count == 0)
                 {
-                    WriteOutputLog($"No log/bin files in '{Path.GetFileName(zipFilePath)}'.");
+                    WriteOutputLog($"No log files in '{Path.GetFileName(zipFilePath)}'.");
                     Directory.Delete(tempFolder, true);
                     return;
                 }
@@ -420,7 +423,7 @@ namespace LogFormatter
                         if (!string.IsNullOrEmpty(targetDirectory) && Directory.Exists(targetDirectory))
                         {
                             DirectoryInfo di = new DirectoryInfo(targetDirectory);
-                            string[] searchPatterns = { "*.log", "*.bin", "*.zip" }; // ✅ thêm "*.zip"
+                            string[] searchPatterns = { "*.log", "*.bin", "*.zip" };
                             List<FileInfo> filteredFiles = new List<FileInfo>();
 
                             foreach (string pattern in searchPatterns)
@@ -430,13 +433,13 @@ namespace LogFormatter
 
                             if (filteredFiles.Count == 0)
                             {
-                                WriteOutputLog($"No valid files found in '{targetDirectory}'.");
+                                WriteOutputLog($"No files in '{targetDirectory}'.");
                                 return;
                             }
 
                             foreach (FileInfo fileInfo in filteredFiles)
                             {
-                                AddFileToTab(fileInfo.FullName);   // .zip sẽ tự động route sang ProcessZipFile bên trong
+                                AddFileToTab(fileInfo.FullName);
                             }
                         }
                     }
@@ -619,10 +622,9 @@ namespace LogFormatter
             }
         }
 
-        private bool ParseInputToBytePattern(string input, out List<byte?> pattern, out bool isRegexWildcard)
+        private bool ParseInputToBytePattern(string input, out List<byte?> pattern)
         {
             pattern = new List<byte?>();
-            isRegexWildcard = false;
 
             if (string.IsNullOrWhiteSpace(input)) return false;
 
@@ -630,21 +632,23 @@ namespace LogFormatter
             string[] tokens = raw.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
 
             bool containsExplicitWildcards = tokens.Any(t => t == "??" || t == "?" || t == ".." || t == "*");
-            bool isMultiTokenHex = tokens.Length > 1 && tokens.All(t => t == "??" || t == "?" || t == ".." || t == "*" || byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out _));
+            bool isMultiTokenHex = tokens.Length > 1 && tokens.All(t =>
+                t == "??" || t == "?" || t == ".." || t == "*" || byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out _));
 
             if (containsExplicitWildcards || isMultiTokenHex)
             {
+                List<byte?> hexPattern = new List<byte?>();
                 bool parseSuccess = true;
+
                 foreach (var token in tokens)
                 {
                     if (token == "??" || token == "?" || token == ".." || token == "*")
                     {
-                        pattern.Add(null);
-                        isRegexWildcard = true;
+                        hexPattern.Add(null);
                     }
                     else if (byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out byte b))
                     {
-                        pattern.Add(b);
+                        hexPattern.Add(b);
                     }
                     else
                     {
@@ -653,8 +657,9 @@ namespace LogFormatter
                     }
                 }
 
-                if (parseSuccess && pattern.Count > 0)
+                if (parseSuccess && hexPattern.Count > 0)
                 {
+                    pattern = hexPattern;
                     return true;
                 }
             }
@@ -666,7 +671,6 @@ namespace LogFormatter
                 pattern.Add(b);
             }
 
-            isRegexWildcard = false;
             return pattern.Count > 0;
         }
 
@@ -674,7 +678,7 @@ namespace LogFormatter
         {
             if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
             {
-                MessageBox.Show("Please enter keyword or hex pattern.", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                WriteOutputLog("Warning: Search pattern is empty.");
                 return;
             }
 
@@ -692,18 +696,18 @@ namespace LogFormatter
 
             Control btn = (Control)sender;
             if (btn != null) btn.Enabled = false;
-            if (saveButton != null) saveButton.Enabled = false;
 
-            if (!ParseInputToBytePattern(rawInput, out List<byte?> targetPattern, out bool isRegexWildcard))
+            if (!ParseInputToBytePattern(rawInput, out List<byte?> targetPattern))
             {
-                MessageBox.Show("Invalid pattern format.", "Invalid Input", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                WriteOutputLog($"Error: Invalid input pattern '{rawInput}'.");
                 if (btn != null) btn.Enabled = true;
                 searchingTab = null;
                 return;
             }
 
             tabInfo.CurrentSearchKeyword = rawInput;
-            if (rtbOutput != null) rtbOutput.Clear();
+
+            WriteOutputLog($"Searching for '{rawInput}'...");
 
             try
             {
@@ -713,151 +717,71 @@ namespace LogFormatter
                 {
                     var results = new List<SearchResultItem>();
                     long activeSearchLength = tabInfo.ActiveFileCutoff;
-
-                    const int MAX_RESULTS_LIMIT = 1000;
                     const int BUFFER_SIZE = 4 * 1024 * 1024;
+                    int patternLen = targetPattern.Count;
 
                     using (FileStream fs = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                     {
-                        if (isRegexWildcard)
+                        byte[] chunkBuffer = new byte[BUFFER_SIZE];
+                        long filePosition = activeSearchLength;
+
+                        while (filePosition > 0)
                         {
-                            int patternLen = targetPattern.Count;
-                            int overlap = Math.Max(0, patternLen - 1);
-                            byte[] chunkBuffer = new byte[BUFFER_SIZE + overlap];
-                            long currentReadOffset = 0;
-                            int leftoverBytes = 0;
+                            searchCts.Token.ThrowIfCancellationRequested();
 
-                            while (currentReadOffset < activeSearchLength)
+                            int bytesToRead = (int)Math.Min(BUFFER_SIZE, filePosition);
+                            long chunkStartOffset = filePosition - bytesToRead;
+
+                            fs.Seek(chunkStartOffset, SeekOrigin.Begin);
+                            int bytesRead = fs.Read(chunkBuffer, 0, bytesToRead);
+                            if (bytesRead <= 0) break;
+
+                            for (int i = bytesRead - patternLen; i >= 0; i--)
                             {
-                                searchCts.Token.ThrowIfCancellationRequested();
-
-                                int bytesToRead = (int)Math.Min(BUFFER_SIZE, activeSearchLength - currentReadOffset);
-                                int bytesRead = fs.Read(chunkBuffer, leftoverBytes, bytesToRead);
-                                if (bytesRead <= 0) break;
-
-                                int totalBufferValid = leftoverBytes + bytesRead;
-
-                                for (int i = 0; i <= totalBufferValid - patternLen; i++)
+                                bool match = true;
+                                for (int j = 0; j < patternLen; j++)
                                 {
-                                    bool isMatch = true;
-                                    for (int j = 0; j < patternLen; j++)
+                                    if (targetPattern[j].HasValue && chunkBuffer[i + j] != targetPattern[j].Value)
                                     {
-                                        if (targetPattern[j].HasValue && chunkBuffer[i + j] != targetPattern[j].Value)
-                                        {
-                                            isMatch = false;
-                                            break;
-                                        }
-                                    }
-
-                                    if (isMatch)
-                                    {
-                                        long matchAbsoluteOffset = (currentReadOffset - leftoverBytes) + i;
-                                        if (matchAbsoluteOffset >= activeSearchLength) break;
-
-                                        long matchLineIndex = matchAbsoluteOffset / BYTES_PER_LINE;
-                                        long lineStartOffset = matchLineIndex * BYTES_PER_LINE;
-
-                                        byte[] lineBuffer = new byte[BYTES_PER_LINE];
-                                        long oldPos = fs.Position;
-                                        fs.Seek(lineStartOffset, SeekOrigin.Begin);
-                                        int lineBytesRead = fs.Read(lineBuffer, 0, BYTES_PER_LINE);
-                                        fs.Seek(oldPos, SeekOrigin.Begin);
-
-                                        List<string> hexChunks = new List<string>();
-                                        for (int k = 0; k < lineBytesRead; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
-
-                                        results.Add(new SearchResultItem
-                                        {
-                                            LineIndex = matchLineIndex,
-                                            Offset = lineStartOffset.ToString("X8"),
-                                            HexData = string.Join(" ", hexChunks),
-                                            DecodedText = ShiftJisEncoding.GetString(lineBuffer, 0, lineBytesRead),
-                                            MatchedInHex = true
-                                        });
-
-                                        if (results.Count >= MAX_RESULTS_LIMIT) break;
-                                    }
-                                }
-
-                                if (results.Count >= MAX_RESULTS_LIMIT) break;
-
-                                if (totalBufferValid >= overlap && overlap > 0)
-                                {
-                                    Buffer.BlockCopy(chunkBuffer, totalBufferValid - overlap, chunkBuffer, 0, overlap);
-                                    leftoverBytes = overlap;
-                                }
-                                else
-                                {
-                                    leftoverBytes = 0;
-                                }
-
-                                currentReadOffset += bytesRead;
-                            }
-                        }
-                        else
-                        {
-                            int patternLen = targetPattern.Count;
-                            byte[] chunkBuffer = new byte[BUFFER_SIZE];
-                            long filePosition = activeSearchLength;
-
-                            while (filePosition > 0)
-                            {
-                                searchCts.Token.ThrowIfCancellationRequested();
-
-                                int bytesToRead = (int)Math.Min(BUFFER_SIZE, filePosition);
-                                long chunkStartOffset = filePosition - bytesToRead;
-
-                                fs.Seek(chunkStartOffset, SeekOrigin.Begin);
-                                int bytesRead = fs.Read(chunkBuffer, 0, bytesToRead);
-                                if (bytesRead <= 0) break;
-
-                                for (int i = bytesRead - patternLen; i >= 0; i--)
-                                {
-                                    bool match = true;
-                                    for (int j = 0; j < patternLen; j++)
-                                    {
-                                        if (targetPattern[j].HasValue && chunkBuffer[i + j] != targetPattern[j].Value)
-                                        {
-                                            match = false;
-                                            break;
-                                        }
-                                    }
-
-                                    if (match)
-                                    {
-                                        long matchAbsoluteOffset = chunkStartOffset + i;
-                                        long matchEndOffset = matchAbsoluteOffset + patternLen;
-                                        newCutoffFound = matchEndOffset;
-
-                                        long matchLineIndex = matchAbsoluteOffset / BYTES_PER_LINE;
-                                        long lineStartOffset = matchLineIndex * BYTES_PER_LINE;
-
-                                        byte[] lineBuffer = new byte[BYTES_PER_LINE];
-                                        fs.Seek(lineStartOffset, SeekOrigin.Begin);
-                                        int lineBytesRead = fs.Read(lineBuffer, 0, BYTES_PER_LINE);
-
-                                        List<string> hexChunks = new List<string>();
-                                        for (int k = 0; k < lineBytesRead; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
-
-                                        results.Add(new SearchResultItem
-                                        {
-                                            LineIndex = matchLineIndex,
-                                            Offset = lineStartOffset.ToString("X8"),
-                                            HexData = string.Join(" ", hexChunks),
-                                            DecodedText = ShiftJisEncoding.GetString(lineBuffer, 0, lineBytesRead),
-                                            MatchedInHex = true
-                                        });
-
+                                        match = false;
                                         break;
                                     }
                                 }
 
-                                if (results.Count > 0) break;
+                                if (match)
+                                {
+                                    long matchAbsoluteOffset = chunkStartOffset + i;
+                                    long matchEndOffset = matchAbsoluteOffset + patternLen;
 
-                                if (chunkStartOffset <= 0) break;
+                                    newCutoffFound = matchEndOffset;
 
-                                filePosition = chunkStartOffset + (patternLen - 1);
+                                    long matchLineIndex = matchAbsoluteOffset / BYTES_PER_LINE;
+                                    long lineStartOffset = matchLineIndex * BYTES_PER_LINE;
+
+                                    byte[] lineBuffer = new byte[BYTES_PER_LINE];
+                                    fs.Seek(lineStartOffset, SeekOrigin.Begin);
+                                    int lineBytesRead = fs.Read(lineBuffer, 0, BYTES_PER_LINE);
+
+                                    List<string> hexChunks = new List<string>();
+                                    for (int k = 0; k < lineBytesRead; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
+
+                                    results.Add(new SearchResultItem
+                                    {
+                                        LineIndex = matchLineIndex,
+                                        Offset = lineStartOffset.ToString("X8"),
+                                        HexData = string.Join(" ", hexChunks),
+                                        DecodedText = ShiftJisEncoding.GetString(lineBuffer, 0, lineBytesRead),
+                                        MatchedInHex = true
+                                    });
+
+                                    break;
+                                }
                             }
+
+                            if (results.Count > 0) break;
+                            if (chunkStartOffset <= 0) break;
+
+                            filePosition = chunkStartOffset + (patternLen - 1);
                         }
                     }
 
@@ -868,7 +792,7 @@ namespace LogFormatter
 
                 if (searchResults.Count == 0)
                 {
-                    MessageBox.Show($"No match for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    WriteOutputLog($"No match found for '{rawInput}'.");
                     return;
                 }
 
@@ -879,21 +803,7 @@ namespace LogFormatter
 
                 if (rtbOutput != null)
                 {
-                    if (isRegexWildcard)
-                    {
-                        WriteOutputLog($"Matched {searchResults.Count} item(s) for '{rawInput}':");
-                        StringBuilder sb = new StringBuilder();
-                        foreach (var res in searchResults)
-                        {
-                            sb.AppendLine($"[Offset:{res.Offset}] {res.HexData}");
-                        }
-                        rtbOutput.AppendText(sb.ToString());
-                        rtbOutput.ScrollToCaret();
-                    }
-                    else
-                    {
-                        WriteOutputLog($"[Offset:{searchResults[0].Offset}] {searchResults[0].HexData}");
-                    }
+                    WriteOutputLog($"[Offset:{searchResults[0].Offset}] {searchResults[0].HexData}");
                 }
 
                 NavigateToLine(tabInfo, searchResults[0].LineIndex);
@@ -904,12 +814,11 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Search error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                WriteOutputLog($"Search error: {ex.Message}");
             }
             finally
             {
                 if (btn != null) btn.Enabled = true;
-                if (saveButton != null) saveButton.Enabled = true;
                 if (searchingTab == currentTab) searchingTab = null;
             }
         }
@@ -971,10 +880,17 @@ namespace LogFormatter
             if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
 
             Color msgColor = Color.LightGray;
-            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Matched"))
+            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Offset:"))
+            {
                 msgColor = Color.LimeGreen;
-            else if (content.Contains("Error") || content.Contains("failed") || content.Contains("disallowed"))
+            }
+            else if (content.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0
+                  || content.IndexOf("failed", StringComparison.OrdinalIgnoreCase) >= 0
+                  || content.IndexOf("disallowed", StringComparison.OrdinalIgnoreCase) >= 0
+                  || content.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
                 msgColor = Color.Tomato;
+            }
 
             rtbOutput.SelectionStart = rtbOutput.Text.Length;
             rtbOutput.SelectionLength = 0;
@@ -998,7 +914,7 @@ namespace LogFormatter
             using (OpenFileDialog ofd = new OpenFileDialog())
             {
                 ofd.Title = "Open Files";
-                ofd.Filter = "Supported Files (*.log; *.bin; *.zip)|*.log;*.bin;*.zip|Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|Zip Files (*.zip)|*.zip|All Files (*.*)|*.*";
+                ofd.Filter = "All Supported (*.log;*.bin;*.zip)|*.log;*.bin;*.zip|ZIP Files (*.zip)|*.zip|Log Files (*.log)|*.log|BIN Files (*.bin)|*.bin|All Files (*.*)|*.*";
                 ofd.Multiselect = true;
                 ofd.RestoreDirectory = true;
 
@@ -1044,25 +960,67 @@ namespace LogFormatter
 
                 TabPage tab = tabControlFiles.TabPages[e.Index];
                 Rectangle tabRect = tabControlFiles.GetTabRect(e.Index);
+                bool isSelected = (e.State == DrawItemState.Selected);
 
-                if (e.State == DrawItemState.Selected)
-                    e.Graphics.FillRectangle(Brushes.White, tabRect);
-                else
-                    e.Graphics.FillRectangle(Brushes.LightGray, tabRect);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
-                Font fontTab = new Font("Segoe UI", 9, FontStyle.Regular);
+                Color bgColor = isSelected ? Color.White : Color.FromArgb(235, 238, 242);
+                using (Brush bgBrush = new SolidBrush(bgColor))
+                {
+                    e.Graphics.FillRectangle(bgBrush, tabRect);
+                }
 
-                Point textLocation = new Point(tabRect.X + 8, tabRect.Y + 5);
-                TextRenderer.DrawText(
-                    e.Graphics,
-                    tab.Text,
-                    fontTab,
-                    textLocation,
-                    Color.Black,
-                    TextFormatFlags.NoClipping
-                );
+                using (Pen sepPen = new Pen(Color.FromArgb(200, 203, 208)))
+                {
+                    e.Graphics.DrawLine(sepPen, tabRect.Right - 1, tabRect.Y + 6, tabRect.Right - 1, tabRect.Bottom - 6);
+                }
 
-                e.Graphics.DrawString("X", fontTab, Brushes.Red, tabRect.Right - 18, tabRect.Y + 4);
+                int xWidth = 26;
+                Rectangle textAreaRect = new Rectangle(tabRect.X + 8, tabRect.Y, tabRect.Width - xWidth - 8, tabRect.Height);
+
+                using (Region oldClip = e.Graphics.Clip)
+                {
+                    e.Graphics.SetClip(textAreaRect);
+
+                    using (Font fontTab = new Font("Segoe UI", 9F, isSelected ? FontStyle.Bold : FontStyle.Regular))
+                    using (Brush textBrush = new SolidBrush(isSelected ? Color.FromArgb(20, 20, 20) : Color.FromArgb(90, 95, 100)))
+                    {
+                        using (StringFormat sf = new StringFormat())
+                        {
+                            sf.Alignment = StringAlignment.Near;
+                            sf.LineAlignment = StringAlignment.Center;
+                            sf.FormatFlags = StringFormatFlags.NoWrap;
+
+                            e.Graphics.DrawString(tab.Text, fontTab, textBrush, textAreaRect, sf);
+                        }
+
+                        int fadeWidth = 35;
+                        Rectangle fadeRect = new Rectangle(textAreaRect.Right - fadeWidth, textAreaRect.Y, fadeWidth, textAreaRect.Height);
+
+                        using (var fadeBrush = new System.Drawing.Drawing2D.LinearGradientBrush(
+                            fadeRect,
+                            Color.FromArgb(0, bgColor),
+                            bgColor,
+                            System.Drawing.Drawing2D.LinearGradientMode.Horizontal))
+                        {
+                            e.Graphics.FillRectangle(fadeBrush, fadeRect);
+                        }
+                    }
+
+                    e.Graphics.Clip = oldClip;
+                }
+
+                int xSize = 8;
+                int xLeft = tabRect.Right - 18;
+                int xTop = tabRect.Y + (tabRect.Height - xSize) / 2;
+
+                Color xColor = isSelected ? Color.FromArgb(80, 80, 80) : Color.FromArgb(160, 160, 160);
+
+                using (Pen xPen = new Pen(xColor, 1.4f))
+                {
+                    e.Graphics.DrawLine(xPen, xLeft, xTop, xLeft + xSize, xTop + xSize);
+                    e.Graphics.DrawLine(xPen, xLeft + xSize, xTop, xLeft, xTop + xSize);
+                }
             }
             catch { }
         }
@@ -1130,7 +1088,7 @@ namespace LogFormatter
 
             Button btnSave = new Button
             {
-                Text = "Save (Overwrite)",
+                Text = "Save",
                 Location = new Point(20, 65),
                 Size = new Size(115, 32)
             };
