@@ -51,19 +51,21 @@ namespace LogFormatter
         private class FileTabInfo
         {
             public string FilePath { get; set; }
-            public long FileLength { get; set; }
+            public long OriginalFileLength { get; set; }
+            public long ActiveFileCutoff { get; set; }
             public ListView DisplayGrid { get; set; }
             public VScrollBar VirtualScrollBar { get; set; }
             public string CurrentSearchKeyword { get; set; } = "";
-            public bool IsRegexHighlightActive { get; set; } = false;
             public long SelectedPingLineIndex { get; set; } = -1;
             public long CurrentViewStartIndex { get; set; } = 0;
+            public string TempDirectoryToCleanup { get; set; } = null;
         }
 
         private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
         private const int BYTES_PER_LINE = 16;
         private const int MAX_DISPLAY_LINES = 50;
         private const int VIRTUAL_SCROLL_SCALE = 1000000;
+        private static readonly Encoding ShiftJisEncoding = Encoding.GetEncoding("Shift-JIS");
         private CancellationTokenSource searchCts;
 
         public Form1()
@@ -100,7 +102,7 @@ namespace LogFormatter
             this.FormClosing += Form1_FormClosing;
         }
 
-        private void AddFileToTab(string filePath)
+        private void AddFileToTab(string filePath, string zipTempFolder = null)
         {
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
 
@@ -153,25 +155,25 @@ namespace LogFormatter
             FileTabInfo tabInfo = new FileTabInfo
             {
                 FilePath = filePath,
-                FileLength = fileLength,
+                OriginalFileLength = fileLength,
+                ActiveFileCutoff = fileLength,
                 DisplayGrid = newListView,
-                VirtualScrollBar = vScroll
+                VirtualScrollBar = vScroll,
+                TempDirectoryToCleanup = zipTempFolder
             };
             openedTabs.Add(newTab, tabInfo);
 
-            // Tự động ăn Focus để không bao giờ tịt lăn chuột
             newListView.MouseEnter += (s, e) => {
                 if (!newListView.Focused) newListView.Focus();
             };
 
-            // LĂN CHUỘT TRỰC TIẾP THEO DÒNG (BẢO ĐẢM MƯỢT LỊM LÊN & XUỐNG)
             newListView.MouseWheel += (s, e) => {
                 if (!newListView.Focused) newListView.Focus();
 
                 long totalLines = GetMaxScrollableLineIndex(tabInfo);
                 if (totalLines <= 0) return;
 
-                int linesDelta = (e.Delta / 120) * 3; // Lăn 1 nấc đi 3 dòng
+                int linesDelta = (e.Delta / 120) * 3;
                 long targetLine = tabInfo.CurrentViewStartIndex - linesDelta;
 
                 if (targetLine < 0) targetLine = 0;
@@ -179,7 +181,6 @@ namespace LogFormatter
 
                 tabInfo.CurrentViewStartIndex = targetLine;
 
-                // Đồng bộ vị trí VScrollBar
                 int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
                 double ratio = (double)targetLine / totalLines;
                 vScroll.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
@@ -187,7 +188,6 @@ namespace LogFormatter
                 RenderVirtualPageStream(tabInfo, targetLine);
             };
 
-            // KÉO THANH SCROLL
             vScroll.Scroll += (s, e) => {
                 long totalLines = GetMaxScrollableLineIndex(tabInfo);
                 if (totalLines <= 0) return;
@@ -204,7 +204,6 @@ namespace LogFormatter
                 RenderVirtualPageStream(tabInfo, targetLine);
             };
 
-            // HIGHLIGHT KHI CLICK DÒNG (PING)
             newListView.MouseClick += (s, e) => {
                 if (newListView.SelectedIndices.Count > 0)
                 {
@@ -225,7 +224,6 @@ namespace LogFormatter
                 fileListBox.Items.Add(fileName);
             }
 
-            // Render dòng 0 ban đầu -> Dữ liệu hiện ra ngay lập tức
             RenderVirtualPageStream(tabInfo, 0);
             WriteOutputLog($"Successfully opened: {fileName}");
         }
@@ -238,21 +236,19 @@ namespace LogFormatter
             lv.BeginUpdate();
             lv.Items.Clear();
 
-            Encoding encodingNhat = Encoding.GetEncoding("Shift-JIS");
-
             try
             {
                 long startByteOffset = startIndex * (long)BYTES_PER_LINE;
-                if (startByteOffset >= tabInfo.FileLength)
+                if (startByteOffset >= tabInfo.ActiveFileCutoff)
                 {
                     lv.EndUpdate();
                     return;
                 }
 
                 long totalBytesToRead = (long)MAX_DISPLAY_LINES * (long)BYTES_PER_LINE;
-                if (startByteOffset + totalBytesToRead > tabInfo.FileLength)
+                if (startByteOffset + totalBytesToRead > tabInfo.ActiveFileCutoff)
                 {
-                    totalBytesToRead = tabInfo.FileLength - startByteOffset;
+                    totalBytesToRead = tabInfo.ActiveFileCutoff - startByteOffset;
                 }
 
                 byte[] bigBuffer = new byte[totalBytesToRead];
@@ -283,7 +279,7 @@ namespace LogFormatter
                     for (int k = 0; k < currentLineBytes; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
                     string hexStr = string.Join(" ", hexChunks);
 
-                    string rawText = encodingNhat.GetString(lineBuffer, 0, currentLineBytes);
+                    string rawText = ShiftJisEncoding.GetString(lineBuffer, 0, currentLineBytes);
 
                     char[] cleanChars = new char[rawText.Length];
                     for (int cIdx = 0; cIdx < rawText.Length; cIdx++)
@@ -297,7 +293,6 @@ namespace LogFormatter
                     item.SubItems.Add(hexStr);
                     item.SubItems.Add(cleanText);
 
-                    // Tô màu vàng nếu dòng được Click (Ping)
                     if (tabInfo.SelectedPingLineIndex != -1 && currentLineIndex == tabInfo.SelectedPingLineIndex)
                     {
                         item.Selected = true;
@@ -312,15 +307,18 @@ namespace LogFormatter
                     lineCount++;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                WriteOutputLog($"Render Error: {ex.Message}");
+            }
 
             lv.EndUpdate();
         }
 
         private long GetMaxScrollableLineIndex(FileTabInfo tabInfo)
         {
-            if (tabInfo == null || tabInfo.FileLength <= 0) return 0;
-            long totalFileLines = (long)Math.Ceiling((double)tabInfo.FileLength / (double)(long)BYTES_PER_LINE);
+            if (tabInfo == null || tabInfo.ActiveFileCutoff <= 0) return 0;
+            long totalFileLines = (long)Math.Ceiling((double)tabInfo.ActiveFileCutoff / (double)(long)BYTES_PER_LINE);
             return Math.Max(0, totalFileLines - 1);
         }
 
@@ -329,29 +327,46 @@ namespace LogFormatter
             try
             {
                 string tempFolder = Path.Combine(Path.GetTempPath(), "LogFormatter_ZipTemp", Guid.NewGuid().ToString("N"));
-
-                if (Directory.Exists(tempFolder)) Directory.Delete(tempFolder, true);
                 Directory.CreateDirectory(tempFolder);
 
-                ZipFile.ExtractToDirectory(zipFilePath, tempFolder);
+                using (ZipArchive archive = ZipFile.OpenRead(zipFilePath))
+                {
+                    foreach (ZipArchiveEntry entry in archive.Entries)
+                    {
+                        string destinationPath = Path.GetFullPath(Path.Combine(tempFolder, entry.FullName));
+                        if (!destinationPath.StartsWith(Path.GetFullPath(tempFolder), StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new Exception("Security Violation: Zip Slip vulnerability detected!");
+                        }
+
+                        if (!string.IsNullOrEmpty(entry.Name))
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
+                            entry.ExtractToFile(destinationPath, true);
+                        }
+                    }
+                }
 
                 DirectoryInfo tempDir = new DirectoryInfo(tempFolder);
-                FileInfo[] logFiles = tempDir.GetFiles("*.log", SearchOption.AllDirectories);
+                List<FileInfo> targetFiles = new List<FileInfo>();
+                targetFiles.AddRange(tempDir.GetFiles("*.log", SearchOption.AllDirectories));
+                targetFiles.AddRange(tempDir.GetFiles("*.bin", SearchOption.AllDirectories));
 
-                if (logFiles.Length == 0)
+                if (targetFiles.Count == 0)
                 {
-                    WriteOutputLog($"No valid files found inside '{Path.GetFileName(zipFilePath)}'.");
+                    WriteOutputLog($"No valid .log or .bin files found inside '{Path.GetFileName(zipFilePath)}'.");
+                    Directory.Delete(tempFolder, true);
                     return;
                 }
 
-                foreach (FileInfo fileInfo in logFiles)
+                foreach (FileInfo fileInfo in targetFiles)
                 {
-                    AddFileToTab(fileInfo.FullName);
+                    AddFileToTab(fileInfo.FullName, tempFolder);
                 }
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Failed to extract '{Path.GetFileName(zipFilePath)}': {ex.Message}");
+                WriteOutputLog($"Failed to process Zip file '{Path.GetFileName(zipFilePath)}': {ex.Message}");
             }
         }
 
@@ -402,7 +417,7 @@ namespace LogFormatter
 
         private void SaveButton_Click(object sender, EventArgs e)
         {
-            var modifiedTabs = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
+            var modifiedTabs = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
             if (modifiedTabs.Count == 0)
             {
                 MessageBox.Show("No edited files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -458,7 +473,7 @@ namespace LogFormatter
                         using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
                         {
                             byte[] buffer = new byte[8192];
-                            long bytesLeft = tabInfo.FileLength;
+                            long bytesLeft = tabInfo.ActiveFileCutoff;
                             while (bytesLeft > 0)
                             {
                                 int read = src.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesLeft));
@@ -472,6 +487,7 @@ namespace LogFormatter
                         {
                             File.Delete(tabInfo.FilePath);
                             File.Move(tempPath, tabInfo.FilePath);
+                            tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
                         }
                         else
                         {
@@ -480,11 +496,11 @@ namespace LogFormatter
                         }
 
                         savedCount++;
-                        WriteOutputLog($"Saved: {Path.GetFileName(targetPath)}");
+                        WriteOutputLog($"Saved successfully: {Path.GetFileName(targetPath)}");
                     }
                     catch (Exception ex)
                     {
-                        WriteOutputLog($"Failed for {currentFileName}: {ex.Message}");
+                        WriteOutputLog($"Failed to save {currentFileName}: {ex.Message}");
                     }
                 }
 
@@ -494,7 +510,7 @@ namespace LogFormatter
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-            var modifiedList = openedTabs.Values.Where(t => File.Exists(t.FilePath) && t.FileLength != new FileInfo(t.FilePath).Length).ToList();
+            var modifiedList = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
             if (modifiedList.Count > 0)
             {
                 var result = MessageBox.Show($"You have {modifiedList.Count} edited file. Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
@@ -507,6 +523,19 @@ namespace LogFormatter
                     e.Cancel = true;
                 }
             }
+
+            foreach (var tabInfo in openedTabs.Values)
+            {
+                CleanupZipTemp(tabInfo.TempDirectoryToCleanup);
+            }
+        }
+
+        private void CleanupZipTemp(string folderPath)
+        {
+            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
+            {
+                try { Directory.Delete(folderPath, true); } catch { }
+            }
         }
 
         private bool ParseInputToBytePattern(string input, out List<byte?> pattern, out bool isRegexWildcard)
@@ -517,11 +546,11 @@ namespace LogFormatter
             if (string.IsNullOrWhiteSpace(input)) return false;
 
             string[] tokens = input.Trim().Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            bool isAllHexOrWildcard = true;
 
             foreach (var token in tokens)
             {
-                // Chấp nhận mọi ký tự wildcard Regex/Hex phổ biến: ??, ?, .., *, .
-                if (token == "??" || token == "?" || token == ".." || token == "*" || token == ".")
+                if (token == "??" || token == "?" || token == ".." || token == "*")
                 {
                     pattern.Add(null);
                     isRegexWildcard = true;
@@ -532,22 +561,32 @@ namespace LogFormatter
                 }
                 else
                 {
-                    // Nếu người dùng nhập chuỗi Regex thực sự (ví dụ chứa . * + [ ] \ ...), 
-                    // coi toàn bộ input là 1 mẫu Regex C# chuẩn!
-                    isRegexWildcard = true;
-                    pattern.Clear();
-                    return true;
+                    isAllHexOrWildcard = false;
+                    break;
                 }
             }
 
-            return pattern.Count > 0 || isRegexWildcard;
+            if (isAllHexOrWildcard && pattern.Count > 0)
+            {
+                return true;
+            }
+
+            pattern.Clear();
+            byte[] textBytes = ShiftJisEncoding.GetBytes(input.Trim());
+            foreach (byte b in textBytes)
+            {
+                pattern.Add(b);
+            }
+
+            isRegexWildcard = false;
+            return pattern.Count > 0;
         }
 
         private async void FindButton_Click(object sender, EventArgs e)
         {
             if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
             {
-                MessageBox.Show("Please enter a word search!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Please enter a word or hex pattern to search!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -556,9 +595,6 @@ namespace LogFormatter
 
             if (!openedTabs.ContainsKey(currentTab)) return;
             var tabInfo = openedTabs[currentTab];
-
-            tabInfo.SelectedPingLineIndex = -1;
-            tabInfo.CurrentSearchKeyword = "";
 
             string rawInput = searchTextBox.Text.Trim();
 
@@ -570,82 +606,90 @@ namespace LogFormatter
 
             if (!ParseInputToBytePattern(rawInput, out List<byte?> targetPattern, out bool isRegexWildcard))
             {
-                MessageBox.Show("Invalid format!", "Invalid Input", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Invalid search pattern format!", "Invalid Input", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 if (btn != null) btn.Enabled = true;
                 return;
             }
 
             tabInfo.CurrentSearchKeyword = rawInput;
-
             if (rtbOutput != null) rtbOutput.Clear();
 
             try
             {
+                long? newCutoffFound = null;
+
                 var searchResults = await Task.Run(() =>
                 {
                     var results = new List<SearchResultItem>();
-                    Encoding shiftJis = Encoding.GetEncoding("Shift-JIS");
-
-                    FileInfo fi = new FileInfo(tabInfo.FilePath);
-                    tabInfo.FileLength = fi.Length;
-
-                    long totalLines = (long)Math.Ceiling((double)tabInfo.FileLength / (double)(long)BYTES_PER_LINE);
-                    byte[] buffer = new byte[BYTES_PER_LINE];
+                    long activeSearchLength = tabInfo.ActiveFileCutoff;
+                    long totalLines = (long)Math.Ceiling((double)activeSearchLength / BYTES_PER_LINE);
 
                     const int MAX_RESULTS_LIMIT = 1000;
+                    const int BUFFER_SIZE = 4 * 1024 * 1024;
 
                     using (FileStream fs = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                     {
                         if (isRegexWildcard)
                         {
-                            long currentLineIndex = 0;
-                            int bytesRead;
-                            while ((bytesRead = fs.Read(buffer, 0, BYTES_PER_LINE)) > 0)
+                            byte[] chunkBuffer = new byte[BUFFER_SIZE];
+                            long currentByteOffset = 0;
+
+                            while (currentByteOffset < activeSearchLength)
                             {
                                 searchCts.Token.ThrowIfCancellationRequested();
-                                long currentByteOffset = fs.Position - bytesRead;
 
-                                bool isMatched = false;
-                                if (targetPattern.Count <= bytesRead)
+                                int bytesToRead = (int)Math.Min(BUFFER_SIZE, activeSearchLength - currentByteOffset);
+                                int bytesRead = fs.Read(chunkBuffer, 0, bytesToRead);
+                                if (bytesRead <= 0) break;
+
+                                for (int i = 0; i <= bytesRead - targetPattern.Count; i++)
                                 {
-                                    for (int i = 0; i <= bytesRead - targetPattern.Count; i++)
+                                    bool isMatch = true;
+                                    for (int j = 0; j < targetPattern.Count; j++)
                                     {
-                                        bool matchAtOffset = true;
-                                        for (int j = 0; j < targetPattern.Count; j++)
+                                        if (targetPattern[j].HasValue && chunkBuffer[i + j] != targetPattern[j].Value)
                                         {
-                                            if (targetPattern[j].HasValue && buffer[i + j] != targetPattern[j].Value)
-                                            {
-                                                matchAtOffset = false;
-                                                break;
-                                            }
+                                            isMatch = false;
+                                            break;
                                         }
+                                    }
 
-                                        if (matchAtOffset) { isMatched = true; break; }
+                                    if (isMatch)
+                                    {
+                                        long matchAbsoluteOffset = currentByteOffset + i;
+                                        long matchLineIndex = matchAbsoluteOffset / BYTES_PER_LINE;
+
+                                        long lineStartOffset = matchLineIndex * BYTES_PER_LINE;
+                                        byte[] lineBuffer = new byte[BYTES_PER_LINE];
+                                        long oldPos = fs.Position;
+                                        fs.Seek(lineStartOffset, SeekOrigin.Begin);
+                                        int lineBytesRead = fs.Read(lineBuffer, 0, BYTES_PER_LINE);
+                                        fs.Seek(oldPos, SeekOrigin.Begin);
+
+                                        List<string> hexChunks = new List<string>();
+                                        for (int k = 0; k < lineBytesRead; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
+
+                                        results.Add(new SearchResultItem
+                                        {
+                                            LineIndex = matchLineIndex,
+                                            Offset = lineStartOffset.ToString("X8"),
+                                            HexData = string.Join(" ", hexChunks),
+                                            DecodedText = ShiftJisEncoding.GetString(lineBuffer, 0, lineBytesRead),
+                                            MatchedInHex = true
+                                        });
+
+                                        if (results.Count >= MAX_RESULTS_LIMIT) break;
                                     }
                                 }
 
-                                if (isMatched)
-                                {
-                                    List<string> hexChunks = new List<string>();
-                                    for (int k = 0; k < bytesRead; k++) hexChunks.Add(buffer[k].ToString("X2"));
-
-                                    results.Add(new SearchResultItem
-                                    {
-                                        LineIndex = currentLineIndex,
-                                        Offset = currentByteOffset.ToString("X8"),
-                                        HexData = string.Join(" ", hexChunks),
-                                        DecodedText = shiftJis.GetString(buffer, 0, bytesRead),
-                                        MatchedInHex = true
-                                    });
-
-                                    if (results.Count >= MAX_RESULTS_LIMIT) break;
-                                }
-
-                                currentLineIndex++;
+                                if (results.Count >= MAX_RESULTS_LIMIT) break;
+                                currentByteOffset += bytesRead;
                             }
                         }
                         else
                         {
+                            byte[] lineBuffer = new byte[BYTES_PER_LINE];
+
                             for (long lineIdx = totalLines - 1; lineIdx >= 0; lineIdx--)
                             {
                                 searchCts.Token.ThrowIfCancellationRequested();
@@ -653,7 +697,7 @@ namespace LogFormatter
                                 long currentByteOffset = lineIdx * (long)BYTES_PER_LINE;
                                 fs.Seek(currentByteOffset, SeekOrigin.Begin);
 
-                                int bytesRead = fs.Read(buffer, 0, BYTES_PER_LINE);
+                                int bytesRead = fs.Read(lineBuffer, 0, BYTES_PER_LINE);
                                 if (bytesRead <= 0) continue;
 
                                 if (targetPattern.Count <= bytesRead)
@@ -663,7 +707,7 @@ namespace LogFormatter
                                         bool match = true;
                                         for (int j = 0; j < targetPattern.Count; j++)
                                         {
-                                            if (targetPattern[j].HasValue && buffer[i + j] != targetPattern[j].Value)
+                                            if (targetPattern[j].HasValue && lineBuffer[i + j] != targetPattern[j].Value)
                                             {
                                                 match = false;
                                                 break;
@@ -673,19 +717,17 @@ namespace LogFormatter
                                         if (match)
                                         {
                                             int matchEndByteIndex = i + targetPattern.Count;
-                                            long matchedByteCutoff = currentByteOffset + matchEndByteIndex;
-
-                                            tabInfo.FileLength = matchedByteCutoff;
+                                            newCutoffFound = currentByteOffset + matchEndByteIndex;
 
                                             List<string> hexChunks = new List<string>();
-                                            for (int k = 0; k < matchEndByteIndex; k++) hexChunks.Add(buffer[k].ToString("X2"));
+                                            for (int k = 0; k < matchEndByteIndex; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
 
                                             results.Add(new SearchResultItem
                                             {
                                                 LineIndex = lineIdx,
                                                 Offset = currentByteOffset.ToString("X8"),
                                                 HexData = string.Join(" ", hexChunks),
-                                                DecodedText = shiftJis.GetString(buffer, 0, matchEndByteIndex),
+                                                DecodedText = ShiftJisEncoding.GetString(lineBuffer, 0, matchEndByteIndex),
                                                 MatchedInHex = true
                                             });
 
@@ -704,22 +746,25 @@ namespace LogFormatter
 
                 if (searchResults.Count == 0)
                 {
-                    MessageBox.Show($"No result for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show($"No result found for '{rawInput}'.", "Search Result", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
+                }
+
+                if (newCutoffFound.HasValue)
+                {
+                    tabInfo.ActiveFileCutoff = newCutoffFound.Value;
                 }
 
                 if (rtbOutput != null)
                 {
                     if (isRegexWildcard)
                     {
-                        WriteOutputLog($" Matched {searchResults.Count} item(s) for '{rawInput}':");
-
+                        WriteOutputLog($"Matched {searchResults.Count} item(s) for '{rawInput}':");
                         StringBuilder sb = new StringBuilder();
                         foreach (var res in searchResults)
                         {
                             sb.AppendLine($"[Offset:{res.Offset}] {res.HexData}");
                         }
-
                         rtbOutput.AppendText(sb.ToString());
                         rtbOutput.ScrollToCaret();
                     }
@@ -733,7 +778,7 @@ namespace LogFormatter
             }
             catch (OperationCanceledException)
             {
-                WriteOutputLog("Cancelled.");
+                WriteOutputLog("Search cancelled by user.");
             }
             catch (Exception ex)
             {
@@ -790,7 +835,10 @@ namespace LogFormatter
                     NavigateToLine(tabInfo, targetLineIndex);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                WriteOutputLog($"Navigation Error: {ex.Message}");
+            }
         }
 
         private void WriteOutputLog(string content)
@@ -799,9 +847,9 @@ namespace LogFormatter
             if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
 
             Color msgColor = Color.LightGray;
-            if (content.Contains("[Folder Scan]") || content.Contains("Successfully") || content.Contains("[Truncated Success]") || content.Contains("[Found Regex]") || content.Contains("[ZIP Success]"))
+            if (content.Contains("[Folder Scan]") || content.Contains("Successfully") || content.Contains("Saved") || content.Contains("Matched"))
                 msgColor = Color.LimeGreen;
-            else if (content.Contains("Error") || content.Contains("Fail"))
+            else if (content.Contains("Error") || content.Contains("Failed") || content.Contains("Violation"))
                 msgColor = Color.Tomato;
 
             rtbOutput.SelectionStart = rtbOutput.Text.Length;
@@ -920,6 +968,9 @@ namespace LogFormatter
         {
             if (tab == null || !openedTabs.ContainsKey(tab)) return;
 
+            var tabInfo = openedTabs[tab];
+            CleanupZipTemp(tabInfo.TempDirectoryToCleanup);
+
             string fileName = tab.Text;
             if (fileListBox != null) fileListBox.Items.Remove(fileName);
             openedTabs.Remove(tab);
@@ -927,93 +978,6 @@ namespace LogFormatter
         }
 
         private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
-    }
-
-    public class SaveSelectionForm : Form
-    {
-        private CheckedListBox checkedListBox;
-        private Button btnOk;
-        private Button btnCancel;
-        private Button btnSelectAll;
-
-        public List<string> SelectedFileNames { get; private set; } = new List<string>();
-
-        public SaveSelectionForm(List<string> fileNames)
-        {
-            this.Text = "Select Modified Files To Save";
-            this.Size = new Size(420, 350);
-            this.StartPosition = FormStartPosition.CenterParent;
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
-            this.MinimizeBox = false;
-
-            Label lblTitle = new Label
-            {
-                Text = "Select modified files to save:",
-                Location = new Point(12, 10),
-                AutoSize = true,
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold)
-            };
-
-            checkedListBox = new CheckedListBox
-            {
-                Location = new Point(12, 32),
-                Size = new Size(380, 200),
-                CheckOnClick = true
-            };
-
-            foreach (var name in fileNames)
-            {
-                checkedListBox.Items.Add(name, true);
-            }
-
-            btnSelectAll = new Button
-            {
-                Text = "Toggle All",
-                Location = new Point(12, 240),
-                Size = new Size(100, 28)
-            };
-            bool allChecked = true;
-            btnSelectAll.Click += (s, e) =>
-            {
-                allChecked = !allChecked;
-                for (int i = 0; i < checkedListBox.Items.Count; i++)
-                {
-                    checkedListBox.SetItemChecked(i, allChecked);
-                }
-            };
-
-            btnOk = new Button
-            {
-                Text = "OK",
-                DialogResult = DialogResult.OK,
-                Location = new Point(236, 240),
-                Size = new Size(75, 28)
-            };
-            btnOk.Click += (s, e) =>
-            {
-                foreach (var item in checkedListBox.CheckedItems)
-                {
-                    SelectedFileNames.Add(item.ToString());
-                }
-            };
-
-            btnCancel = new Button
-            {
-                Text = "Cancel",
-                DialogResult = DialogResult.Cancel,
-                Location = new Point(317, 240),
-                Size = new Size(75, 28)
-            };
-
-            this.Controls.Add(lblTitle);
-            this.Controls.Add(checkedListBox);
-            this.Controls.Add(btnSelectAll);
-            this.Controls.Add(btnOk);
-            this.Controls.Add(btnCancel);
-            this.AcceptButton = btnOk;
-            this.CancelButton = btnCancel;
-        }
     }
 
     public class SaveModeDialog : Form
