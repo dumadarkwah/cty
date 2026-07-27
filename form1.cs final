@@ -516,32 +516,31 @@ namespace LogFormatter
 
             if (string.IsNullOrWhiteSpace(input)) return false;
 
-            try
-            {
-                string[] tokens = input.Trim().Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var token in tokens)
-                {
-                    if (token == "??" || token == "?")
-                    {
-                        pattern.Add(null);
-                        isRegexWildcard = true;
-                    }
-                    else if (byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out byte b))
-                    {
-                        pattern.Add(b);
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
+            string[] tokens = input.Trim().Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
 
-                return pattern.Count > 0;
-            }
-            catch
+            foreach (var token in tokens)
             {
-                return false;
+                // Chấp nhận mọi ký tự wildcard Regex/Hex phổ biến: ??, ?, .., *, .
+                if (token == "??" || token == "?" || token == ".." || token == "*" || token == ".")
+                {
+                    pattern.Add(null);
+                    isRegexWildcard = true;
+                }
+                else if (byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out byte b))
+                {
+                    pattern.Add(b);
+                }
+                else
+                {
+                    // Nếu người dùng nhập chuỗi Regex thực sự (ví dụ chứa . * + [ ] \ ...), 
+                    // coi toàn bộ input là 1 mẫu Regex C# chuẩn!
+                    isRegexWildcard = true;
+                    pattern.Clear();
+                    return true;
+                }
             }
+
+            return pattern.Count > 0 || isRegexWildcard;
         }
 
         private async void FindButton_Click(object sender, EventArgs e)
