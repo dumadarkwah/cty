@@ -127,7 +127,7 @@ namespace LogFormatter
             catch { }
         }
 
-        private void AddFileToTab(string filePath, string zipTempFolder = null)
+        private async void AddFileToTab(string filePath, string zipTempFolder = null)
         {
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
 
@@ -135,7 +135,7 @@ namespace LogFormatter
 
             if (extensionLower == ".zip")
             {
-                ProcessZipFile(filePath);
+                await ProcessZipFileAsync(filePath);
                 return;
             }
 
@@ -355,43 +355,52 @@ namespace LogFormatter
             return Math.Max(0, totalFileLines - 1);
         }
 
-        private void ProcessZipFile(string zipFilePath)
+        // 🎯 TỐI ƯU KHÔNG BỊ ĐƠ APP: Đưa việc mở & giải nén file ZIP vào Background Task
+        private async Task ProcessZipFileAsync(string zipFilePath)
         {
+            string zipName = Path.GetFileName(zipFilePath);
+            WriteOutputLog($"Extracting '{zipName}'...");
+            this.Cursor = Cursors.WaitCursor;
+
             try
             {
                 string tempFolder = Path.Combine(Path.GetTempPath(), "LogFormatter_ZipTemp", Guid.NewGuid().ToString("N"));
-                Directory.CreateDirectory(tempFolder);
 
-                List<FileInfo> targetFiles = new List<FileInfo>();
-
-                using (ZipArchive archive = ZipFile.OpenRead(zipFilePath))
+                var targetFiles = await Task.Run(() =>
                 {
-                    foreach (ZipArchiveEntry entry in archive.Entries)
+                    Directory.CreateDirectory(tempFolder);
+                    var extractedFiles = new List<FileInfo>();
+
+                    using (ZipArchive archive = ZipFile.OpenRead(zipFilePath))
                     {
-                        if (string.IsNullOrEmpty(entry.Name)) continue;
-
-                        string entryExt = Path.GetExtension(entry.Name).ToLower();
-                        if (entryExt != ".log" && entryExt != ".bin") continue;
-
-                        string safeName = Path.GetFileName(entry.Name);
-                        string destinationPath = Path.Combine(tempFolder, Guid.NewGuid().ToString("N") + "_" + safeName);
-
-                        string fullTempPath = Path.GetFullPath(tempFolder);
-                        string fullDestPath = Path.GetFullPath(destinationPath);
-                        if (!fullDestPath.StartsWith(fullTempPath, StringComparison.OrdinalIgnoreCase))
+                        foreach (ZipArchiveEntry entry in archive.Entries)
                         {
-                            throw new Exception("Security Error: Zip Slip detected.");
-                        }
+                            if (string.IsNullOrEmpty(entry.Name)) continue;
 
-                        entry.ExtractToFile(destinationPath, true);
-                        targetFiles.Add(new FileInfo(destinationPath));
+                            string entryExt = Path.GetExtension(entry.Name).ToLower();
+                            if (entryExt != ".log" && entryExt != ".bin") continue;
+
+                            string safeName = Path.GetFileName(entry.Name);
+                            string destinationPath = Path.Combine(tempFolder, Guid.NewGuid().ToString("N") + "_" + safeName);
+
+                            string fullTempPath = Path.GetFullPath(tempFolder);
+                            string fullDestPath = Path.GetFullPath(destinationPath);
+                            if (!fullDestPath.StartsWith(fullTempPath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new Exception("Security Error: Zip Slip detected.");
+                            }
+
+                            entry.ExtractToFile(destinationPath, true);
+                            extractedFiles.Add(new FileInfo(destinationPath));
+                        }
                     }
-                }
+                    return extractedFiles;
+                });
 
                 if (targetFiles.Count == 0)
                 {
-                    WriteOutputLog($"No log files in '{Path.GetFileName(zipFilePath)}'.");
-                    Directory.Delete(tempFolder, true);
+                    WriteOutputLog($"No log files in '{zipName}'.");
+                    try { Directory.Delete(tempFolder, true); } catch { }
                     return;
                 }
 
@@ -404,9 +413,13 @@ namespace LogFormatter
             {
                 WriteOutputLog($"ZIP error: {ex.Message}");
             }
+            finally
+            {
+                this.Cursor = Cursors.Default;
+            }
         }
 
-        private void ExecuteSafeFolderScan()
+        private async void ExecuteSafeFolderScan()
         {
             using (var dialog = new CommonOpenFileDialog())
             {
@@ -422,14 +435,20 @@ namespace LogFormatter
 
                         if (!string.IsNullOrEmpty(targetDirectory) && Directory.Exists(targetDirectory))
                         {
-                            DirectoryInfo di = new DirectoryInfo(targetDirectory);
-                            string[] searchPatterns = { "*.log", "*.bin", "*.zip" };
-                            List<FileInfo> filteredFiles = new List<FileInfo>();
+                            this.Cursor = Cursors.WaitCursor;
 
-                            foreach (string pattern in searchPatterns)
+                            List<FileInfo> filteredFiles = await Task.Run(() =>
                             {
-                                filteredFiles.AddRange(di.GetFiles(pattern, SearchOption.AllDirectories));
-                            }
+                                DirectoryInfo di = new DirectoryInfo(targetDirectory);
+                                string[] searchPatterns = { "*.log", "*.bin", "*.zip" };
+                                List<FileInfo> files = new List<FileInfo>();
+
+                                foreach (string pattern in searchPatterns)
+                                {
+                                    files.AddRange(di.GetFiles(pattern, SearchOption.AllDirectories));
+                                }
+                                return files;
+                            });
 
                             if (filteredFiles.Count == 0)
                             {
@@ -446,6 +465,10 @@ namespace LogFormatter
                     catch (Exception ex)
                     {
                         MessageBox.Show(ex.Message, "Error");
+                    }
+                    finally
+                    {
+                        this.Cursor = Cursors.Default;
                     }
                 }
             }
@@ -880,7 +903,7 @@ namespace LogFormatter
             if (rtbOutput.InvokeRequired) { rtbOutput.Invoke(new Action<string>(WriteOutputLog), content); return; }
 
             Color msgColor = Color.LightGray;
-            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Offset:"))
+            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Offset:") || content.Contains("Extracting"))
             {
                 msgColor = Color.LimeGreen;
             }
