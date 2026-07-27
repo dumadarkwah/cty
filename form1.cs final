@@ -62,6 +62,8 @@ namespace LogFormatter
         }
 
         private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
+        private Dictionary<string, int> zipTempFolderRefCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
         private const int BYTES_PER_LINE = 16;
         private const int MAX_DISPLAY_LINES = 50;
         private const int VIRTUAL_SCROLL_SCALE = 1000000;
@@ -76,9 +78,12 @@ namespace LogFormatter
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
             this.Load += (s, e) => {
+                CleanupOrphanedZipTempFolders();
+
                 if (fileListBox != null)
                 {
                     fileListBox.Items.Clear();
+                    fileListBox.DisplayMember = "Text";
                     fileListBox.SelectedIndexChanged += FileListBox_SelectedIndexChanged;
                 }
                 if (tabControlFiles != null)
@@ -100,6 +105,25 @@ namespace LogFormatter
             };
 
             this.FormClosing += Form1_FormClosing;
+        }
+
+        private void CleanupOrphanedZipTempFolders()
+        {
+            try
+            {
+                string tempRoot = Path.Combine(Path.GetTempPath(), "LogFormatter_ZipTemp");
+                if (!Directory.Exists(tempRoot)) return;
+
+                DirectoryInfo rootDir = new DirectoryInfo(tempRoot);
+                foreach (DirectoryInfo subDir in rootDir.GetDirectories())
+                {
+                    if (DateTime.Now - subDir.CreationTime > TimeSpan.FromHours(24))
+                    {
+                        try { subDir.Delete(true); } catch { }
+                    }
+                }
+            }
+            catch { }
         }
 
         private void AddFileToTab(string filePath, string zipTempFolder = null)
@@ -163,6 +187,14 @@ namespace LogFormatter
             };
             openedTabs.Add(newTab, tabInfo);
 
+            if (!string.IsNullOrEmpty(zipTempFolder))
+            {
+                if (zipTempFolderRefCount.ContainsKey(zipTempFolder))
+                    zipTempFolderRefCount[zipTempFolder]++;
+                else
+                    zipTempFolderRefCount[zipTempFolder] = 1;
+            }
+
             newListView.MouseEnter += (s, e) => {
                 if (!newListView.Focused) newListView.Focus();
             };
@@ -221,7 +253,7 @@ namespace LogFormatter
 
             if (fileListBox != null)
             {
-                fileListBox.Items.Add(fileName);
+                fileListBox.Items.Add(newTab);
             }
 
             RenderVirtualPageStream(tabInfo, 0);
@@ -420,7 +452,7 @@ namespace LogFormatter
             var modifiedTabs = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
             if (modifiedTabs.Count == 0)
             {
-                MessageBox.Show("No edited files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("No edited/shaped files found to save!", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -438,8 +470,7 @@ namespace LogFormatter
                     return false;
                 }
 
-                bool isOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
-                int savedCount = 0;
+                bool requestedOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
 
                 foreach (var tabInfo in targetTabs)
                 {
@@ -447,6 +478,15 @@ namespace LogFormatter
                     try
                     {
                         string targetPath = tabInfo.FilePath;
+                        bool isZipExtractedFile = !string.IsNullOrEmpty(tabInfo.TempDirectoryToCleanup);
+                        bool isOverwrite = requestedOverwrite;
+
+                        if (isZipExtractedFile && isOverwrite)
+                        {
+                            MessageBox.Show($"'{currentFileName}' was extracted from a ZIP archive. Overwriting temporary files is not allowed.\nPlease select a permanent save location.",
+                                "Save Action Redirected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            isOverwrite = false;
+                        }
 
                         if (!isOverwrite)
                         {
@@ -454,7 +494,7 @@ namespace LogFormatter
                             {
                                 sfd.Title = $"Save As - {currentFileName}";
                                 sfd.Filter = "Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|All Files (*.*)|*.*";
-                                sfd.InitialDirectory = Path.GetDirectoryName(tabInfo.FilePath);
+                                sfd.InitialDirectory = isZipExtractedFile ? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) : Path.GetDirectoryName(tabInfo.FilePath);
                                 sfd.FileName = Path.GetFileNameWithoutExtension(tabInfo.FilePath) + "_trimmed" + Path.GetExtension(tabInfo.FilePath);
 
                                 if (sfd.ShowDialog(this) == DialogResult.OK)
@@ -483,20 +523,46 @@ namespace LogFormatter
                             }
                         }
 
+                        TabPage activeTabKey = openedTabs.FirstOrDefault(x => x.Value == tabInfo).Key;
+                        string newFileName = Path.GetFileName(targetPath);
+
                         if (isOverwrite)
                         {
                             File.Delete(tabInfo.FilePath);
                             File.Move(tempPath, tabInfo.FilePath);
                             tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
+                            WriteOutputLog($"Saved successfully: {newFileName}");
                         }
                         else
                         {
                             if (File.Exists(targetPath)) File.Delete(targetPath);
                             File.Move(tempPath, targetPath);
-                        }
 
-                        savedCount++;
-                        WriteOutputLog($"Saved successfully: {Path.GetFileName(targetPath)}");
+                            if (isZipExtractedFile)
+                            {
+                                ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
+                                tabInfo.TempDirectoryToCleanup = null;
+                            }
+
+                            tabInfo.FilePath = targetPath;
+                            tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
+
+                            if (activeTabKey != null)
+                            {
+                                activeTabKey.Text = newFileName;
+                            }
+
+                            if (fileListBox != null)
+                            {
+                                int itemIdx = fileListBox.Items.IndexOf(activeTabKey);
+                                if (itemIdx >= 0)
+                                {
+                                    fileListBox.Items[itemIdx] = activeTabKey;
+                                }
+                            }
+
+                            WriteOutputLog($"Saved successfully to: {targetPath}. Tab now points to this new file.");
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -513,7 +579,7 @@ namespace LogFormatter
             var modifiedList = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
             if (modifiedList.Count > 0)
             {
-                var result = MessageBox.Show($"You have {modifiedList.Count} edited file. Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                var result = MessageBox.Show($"You have {modifiedList.Count} edited/shaped file(s). Do you want to save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                 if (result == DialogResult.Yes)
                 {
                     if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
@@ -524,17 +590,25 @@ namespace LogFormatter
                 }
             }
 
-            foreach (var tabInfo in openedTabs.Values)
+            foreach (var tabInfo in openedTabs.Values.ToList())
             {
-                CleanupZipTemp(tabInfo.TempDirectoryToCleanup);
+                ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
             }
         }
 
-        private void CleanupZipTemp(string folderPath)
+        private void ReleaseZipTempFolder(string folderPath)
         {
-            if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
+            if (!string.IsNullOrEmpty(folderPath) && zipTempFolderRefCount.ContainsKey(folderPath))
             {
-                try { Directory.Delete(folderPath, true); } catch { }
+                zipTempFolderRefCount[folderPath]--;
+                if (zipTempFolderRefCount[folderPath] <= 0)
+                {
+                    zipTempFolderRefCount.Remove(folderPath);
+                    if (Directory.Exists(folderPath))
+                    {
+                        try { Directory.Delete(folderPath, true); } catch { }
+                    }
+                }
             }
         }
 
@@ -545,34 +619,41 @@ namespace LogFormatter
 
             if (string.IsNullOrWhiteSpace(input)) return false;
 
-            string[] tokens = input.Trim().Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
-            bool isAllHexOrWildcard = true;
+            string raw = input.Trim();
+            string[] tokens = raw.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
 
-            foreach (var token in tokens)
-            {
-                if (token == "??" || token == "?" || token == ".." || token == "*")
-                {
-                    pattern.Add(null);
-                    isRegexWildcard = true;
-                }
-                else if (byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out byte b))
-                {
-                    pattern.Add(b);
-                }
-                else
-                {
-                    isAllHexOrWildcard = false;
-                    break;
-                }
-            }
+            bool containsExplicitWildcards = tokens.Any(t => t == "??" || t == "?" || t == ".." || t == "*");
+            bool isMultiTokenHex = tokens.Length > 1 && tokens.All(t => t == "??" || t == "?" || t == ".." || t == "*" || byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out _));
 
-            if (isAllHexOrWildcard && pattern.Count > 0)
+            if (containsExplicitWildcards || isMultiTokenHex)
             {
-                return true;
+                bool parseSuccess = true;
+                foreach (var token in tokens)
+                {
+                    if (token == "??" || token == "?" || token == ".." || token == "*")
+                    {
+                        pattern.Add(null);
+                        isRegexWildcard = true;
+                    }
+                    else if (byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out byte b))
+                    {
+                        pattern.Add(b);
+                    }
+                    else
+                    {
+                        parseSuccess = false;
+                        break;
+                    }
+                }
+
+                if (parseSuccess && pattern.Count > 0)
+                {
+                    return true;
+                }
             }
 
             pattern.Clear();
-            byte[] textBytes = ShiftJisEncoding.GetBytes(input.Trim());
+            byte[] textBytes = ShiftJisEncoding.GetBytes(raw);
             foreach (byte b in textBytes)
             {
                 pattern.Add(b);
@@ -622,7 +703,6 @@ namespace LogFormatter
                 {
                     var results = new List<SearchResultItem>();
                     long activeSearchLength = tabInfo.ActiveFileCutoff;
-                    long totalLines = (long)Math.Ceiling((double)activeSearchLength / BYTES_PER_LINE);
 
                     const int MAX_RESULTS_LIMIT = 1000;
                     const int BUFFER_SIZE = 4 * 1024 * 1024;
@@ -631,21 +711,26 @@ namespace LogFormatter
                     {
                         if (isRegexWildcard)
                         {
-                            byte[] chunkBuffer = new byte[BUFFER_SIZE];
-                            long currentByteOffset = 0;
+                            int patternLen = targetPattern.Count;
+                            int overlap = Math.Max(0, patternLen - 1);
+                            byte[] chunkBuffer = new byte[BUFFER_SIZE + overlap];
+                            long currentReadOffset = 0;
+                            int leftoverBytes = 0;
 
-                            while (currentByteOffset < activeSearchLength)
+                            while (currentReadOffset < activeSearchLength)
                             {
                                 searchCts.Token.ThrowIfCancellationRequested();
 
-                                int bytesToRead = (int)Math.Min(BUFFER_SIZE, activeSearchLength - currentByteOffset);
-                                int bytesRead = fs.Read(chunkBuffer, 0, bytesToRead);
+                                int bytesToRead = (int)Math.Min(BUFFER_SIZE, activeSearchLength - currentReadOffset);
+                                int bytesRead = fs.Read(chunkBuffer, leftoverBytes, bytesToRead);
                                 if (bytesRead <= 0) break;
 
-                                for (int i = 0; i <= bytesRead - targetPattern.Count; i++)
+                                int totalBufferValid = leftoverBytes + bytesRead;
+
+                                for (int i = 0; i <= totalBufferValid - patternLen; i++)
                                 {
                                     bool isMatch = true;
-                                    for (int j = 0; j < targetPattern.Count; j++)
+                                    for (int j = 0; j < patternLen; j++)
                                     {
                                         if (targetPattern[j].HasValue && chunkBuffer[i + j] != targetPattern[j].Value)
                                         {
@@ -656,10 +741,12 @@ namespace LogFormatter
 
                                     if (isMatch)
                                     {
-                                        long matchAbsoluteOffset = currentByteOffset + i;
-                                        long matchLineIndex = matchAbsoluteOffset / BYTES_PER_LINE;
+                                        long matchAbsoluteOffset = (currentReadOffset - leftoverBytes) + i;
+                                        if (matchAbsoluteOffset >= activeSearchLength) break;
 
+                                        long matchLineIndex = matchAbsoluteOffset / BYTES_PER_LINE;
                                         long lineStartOffset = matchLineIndex * BYTES_PER_LINE;
+
                                         byte[] lineBuffer = new byte[BYTES_PER_LINE];
                                         long oldPos = fs.Position;
                                         fs.Seek(lineStartOffset, SeekOrigin.Begin);
@@ -683,60 +770,83 @@ namespace LogFormatter
                                 }
 
                                 if (results.Count >= MAX_RESULTS_LIMIT) break;
-                                currentByteOffset += bytesRead;
+
+                                if (totalBufferValid >= overlap && overlap > 0)
+                                {
+                                    Buffer.BlockCopy(chunkBuffer, totalBufferValid - overlap, chunkBuffer, 0, overlap);
+                                    leftoverBytes = overlap;
+                                }
+                                else
+                                {
+                                    leftoverBytes = 0;
+                                }
+
+                                currentReadOffset += bytesRead;
                             }
                         }
                         else
                         {
-                            byte[] lineBuffer = new byte[BYTES_PER_LINE];
+                            int patternLen = targetPattern.Count;
+                            byte[] chunkBuffer = new byte[BUFFER_SIZE];
+                            long filePosition = activeSearchLength;
 
-                            for (long lineIdx = totalLines - 1; lineIdx >= 0; lineIdx--)
+                            while (filePosition > 0)
                             {
                                 searchCts.Token.ThrowIfCancellationRequested();
 
-                                long currentByteOffset = lineIdx * (long)BYTES_PER_LINE;
-                                fs.Seek(currentByteOffset, SeekOrigin.Begin);
+                                int bytesToRead = (int)Math.Min(BUFFER_SIZE, filePosition);
+                                long chunkStartOffset = filePosition - bytesToRead;
 
-                                int bytesRead = fs.Read(lineBuffer, 0, BYTES_PER_LINE);
-                                if (bytesRead <= 0) continue;
+                                fs.Seek(chunkStartOffset, SeekOrigin.Begin);
+                                int bytesRead = fs.Read(chunkBuffer, 0, bytesToRead);
+                                if (bytesRead <= 0) break;
 
-                                if (targetPattern.Count <= bytesRead)
+                                for (int i = bytesRead - patternLen; i >= 0; i--)
                                 {
-                                    for (int i = bytesRead - targetPattern.Count; i >= 0; i--)
+                                    bool match = true;
+                                    for (int j = 0; j < patternLen; j++)
                                     {
-                                        bool match = true;
-                                        for (int j = 0; j < targetPattern.Count; j++)
+                                        if (targetPattern[j].HasValue && chunkBuffer[i + j] != targetPattern[j].Value)
                                         {
-                                            if (targetPattern[j].HasValue && lineBuffer[i + j] != targetPattern[j].Value)
-                                            {
-                                                match = false;
-                                                break;
-                                            }
-                                        }
-
-                                        if (match)
-                                        {
-                                            int matchEndByteIndex = i + targetPattern.Count;
-                                            newCutoffFound = currentByteOffset + matchEndByteIndex;
-
-                                            List<string> hexChunks = new List<string>();
-                                            for (int k = 0; k < matchEndByteIndex; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
-
-                                            results.Add(new SearchResultItem
-                                            {
-                                                LineIndex = lineIdx,
-                                                Offset = currentByteOffset.ToString("X8"),
-                                                HexData = string.Join(" ", hexChunks),
-                                                DecodedText = ShiftJisEncoding.GetString(lineBuffer, 0, matchEndByteIndex),
-                                                MatchedInHex = true
-                                            });
-
+                                            match = false;
                                             break;
                                         }
+                                    }
+
+                                    if (match)
+                                    {
+                                        long matchAbsoluteOffset = chunkStartOffset + i;
+                                        long matchEndOffset = matchAbsoluteOffset + patternLen;
+                                        newCutoffFound = matchEndOffset;
+
+                                        long matchLineIndex = matchAbsoluteOffset / BYTES_PER_LINE;
+                                        long lineStartOffset = matchLineIndex * BYTES_PER_LINE;
+
+                                        byte[] lineBuffer = new byte[BYTES_PER_LINE];
+                                        fs.Seek(lineStartOffset, SeekOrigin.Begin);
+                                        int lineBytesRead = fs.Read(lineBuffer, 0, BYTES_PER_LINE);
+
+                                        List<string> hexChunks = new List<string>();
+                                        for (int k = 0; k < lineBytesRead; k++) hexChunks.Add(lineBuffer[k].ToString("X2"));
+
+                                        results.Add(new SearchResultItem
+                                        {
+                                            LineIndex = matchLineIndex,
+                                            Offset = lineStartOffset.ToString("X8"),
+                                            HexData = string.Join(" ", hexChunks),
+                                            DecodedText = ShiftJisEncoding.GetString(lineBuffer, 0, lineBytesRead),
+                                            MatchedInHex = true
+                                        });
+
+                                        break;
                                     }
                                 }
 
                                 if (results.Count > 0) break;
+
+                                if (chunkStartOffset <= 0) break;
+
+                                filePosition = chunkStartOffset + (patternLen - 1);
                             }
                         }
                     }
@@ -893,25 +1003,20 @@ namespace LogFormatter
         private void FileListBox_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (fileListBox == null || fileListBox.SelectedItem == null) return;
-            string selectedFileName = fileListBox.SelectedItem.ToString();
 
-            if (tabControlFiles != null)
+            if (fileListBox.SelectedItem is TabPage targetTab)
             {
-                foreach (TabPage tab in tabControlFiles.TabPages)
+                if (tabControlFiles != null)
                 {
-                    if (tab.Text == selectedFileName)
-                    {
-                        tabControlFiles.SelectedTab = tab;
+                    tabControlFiles.SelectedTab = targetTab;
 
-                        if (openedTabs.ContainsKey(tab))
+                    if (openedTabs.ContainsKey(targetTab))
+                    {
+                        var tabInfo = openedTabs[targetTab];
+                        if (tabInfo.SelectedPingLineIndex >= 0)
                         {
-                            var tabInfo = openedTabs[tab];
-                            if (tabInfo.SelectedPingLineIndex >= 0)
-                            {
-                                NavigateToLine(tabInfo, tabInfo.SelectedPingLineIndex);
-                            }
+                            NavigateToLine(tabInfo, tabInfo.SelectedPingLineIndex);
                         }
-                        break;
                     }
                 }
             }
@@ -968,13 +1073,21 @@ namespace LogFormatter
         {
             if (tab == null || !openedTabs.ContainsKey(tab)) return;
 
-            var tabInfo = openedTabs[tab];
-            CleanupZipTemp(tabInfo.TempDirectoryToCleanup);
+            // 🛠️ Hủy tác vụ tìm kiếm đang chạy nền nếu đóng đúng Tab này
+            if (tabControlFiles != null && tabControlFiles.SelectedTab == tab)
+            {
+                searchCts?.Cancel();
+            }
 
-            string fileName = tab.Text;
-            if (fileListBox != null) fileListBox.Items.Remove(fileName);
+            var tabInfo = openedTabs[tab];
+            ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
+
+            if (fileListBox != null) fileListBox.Items.Remove(tab);
             openedTabs.Remove(tab);
             if (tabControlFiles != null) tabControlFiles.TabPages.Remove(tab);
+
+            // 🛠️ BỔ SUNG: Giải phóng tài nguyên Win32 Handle tức thì
+            tab.Dispose();
         }
 
         private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
