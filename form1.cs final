@@ -16,6 +16,11 @@ namespace LogFormatter
 {
     public partial class Form1 : Form
     {
+        // app language enum
+        public enum AppLanguage { English, Japanese }
+        private AppLanguage currentLanguage = AppLanguage.English;
+
+        // stores state management information per tab
         private class FileTabInfo
         {
             public string FilePath { get; set; }
@@ -37,11 +42,13 @@ namespace LogFormatter
         private const int MAX_DISPLAY_LINES = 50;
         private const int VIRTUAL_SCROLL_SCALE = 1000000;
         private static readonly Encoding ShiftJisEncoding = Encoding.GetEncoding("Shift-JIS");
+
         private CancellationTokenSource searchCts;
         private TabPage searchingTab = null;
 
         private int activeZipTasks = 0;
         private ToolTip mainToolTip;
+        private Button langSwitchButton;
 
         public Form1()
         {
@@ -77,24 +84,155 @@ namespace LogFormatter
                     rtbOutput.MouseClick += RtbOutput_MouseClick;
                 }
 
-                Control[] revertBtns = this.Controls.Find("revertButton", true);
-                if (revertBtns.Length == 0) revertBtns = this.Controls.Find("resetViewButton", true);
+                // create dynamic language switcher button positioned safely away from existing buttons
+                Control[] existingLangBtns = this.Controls.Find("langSwitchButton", true);
+                if (existingLangBtns.Length == 0)
+                {
+                    langSwitchButton = new Button
+                    {
+                        Name = "langSwitchButton",
+                        Text = "ENG",
+                        Size = new Size(65, 28),
+                        Location = new Point(this.ClientSize.Width - 180, 10), // offset leftwards to prevent overlapping
+                        Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                        UseVisualStyleBackColor = true,
+                        Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+                    };
+                    this.Controls.Add(langSwitchButton);
+                    langSwitchButton.BringToFront();
+                }
+                else
+                {
+                    langSwitchButton = (Button)existingLangBtns[0];
+                }
+
+                // bind event handlers for original buttons
+                Control[] revertBtns = FindControlsByPossibleNames("revertButton", "resetViewButton", "Revert");
                 if (revertBtns.Length > 0 && revertBtns[0] is Button btnRevert)
                 {
                     btnRevert.Click += RevertButton_Click;
                 }
 
-                Control[] undoBtns = this.Controls.Find("undoFindButton", true);
+                Control[] undoBtns = FindControlsByPossibleNames("undoFindButton", "backButton", "Back", "Undo");
                 if (undoBtns.Length > 0 && undoBtns[0] is Button btnUndo)
                 {
                     btnUndo.Click += UndoFindButton_Click;
                     mainToolTip = new ToolTip();
-                    mainToolTip.SetToolTip(btnUndo, "Undo last search step");
+                    mainToolTip.SetToolTip(btnUndo, "Back / Undo last search step (Ctrl + Z)");
                 }
+
+                // handle language switch button click
+                langSwitchButton.Click += (btnSender, btnArgs) => {
+                    AppLanguage targetLang = (currentLanguage == AppLanguage.English) ? AppLanguage.Japanese : AppLanguage.English;
+                    ApplyLanguage(targetLang);
+                };
+
+                // apply default language
+                ApplyLanguage(AppLanguage.English);
             };
 
             this.FormClosing += Form1_FormClosing;
             this.FormClosed += (s, e) => mainToolTip?.Dispose();
+        }
+
+        // helper method to find controls safely excluding the lang switch button itself
+        private Control[] FindControlsByPossibleNames(params string[] possibleIdentifiers)
+        {
+            List<Control> matches = new List<Control>();
+            foreach (string id in possibleIdentifiers)
+            {
+                Control[] found = this.Controls.Find(id, true);
+                foreach (Control c in found)
+                {
+                    if (c != langSwitchButton && c.Name != "langSwitchButton")
+                    {
+                        matches.Add(c);
+                    }
+                }
+            }
+
+            if (matches.Count == 0)
+            {
+                // search controls by button text if name search returns empty
+                foreach (Control c in GetAllControls(this))
+                {
+                    if (c is Button btn && btn != langSwitchButton && btn.Name != "langSwitchButton")
+                    {
+                        if (possibleIdentifiers.Any(id => string.Equals(btn.Text.Trim(), id, StringComparison.OrdinalIgnoreCase) ||
+                                                          string.Equals(btn.Name, id, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            matches.Add(btn);
+                        }
+                    }
+                }
+            }
+            return matches.Distinct().ToArray();
+        }
+
+        private IEnumerable<Control> GetAllControls(Control parent)
+        {
+            foreach (Control c in parent.Controls)
+            {
+                yield return c;
+                foreach (Control child in GetAllControls(c))
+                {
+                    yield return child;
+                }
+            }
+        }
+
+        // dynamic ui language switcher method
+        public void ApplyLanguage(AppLanguage lang)
+        {
+            currentLanguage = lang;
+            bool isJa = (lang == AppLanguage.Japanese);
+
+            // 1. update language switch button label
+            if (langSwitchButton != null)
+            {
+                langSwitchButton.Text = isJa ? "JP" : "ENG";
+            }
+
+            // 2. update open button
+            Control[] openBtns = FindControlsByPossibleNames("openButton", "Open", "btnOpen");
+            if (openBtns.Length > 0 && openBtns[0] is Button btnOpen)
+            {
+                btnOpen.Text = isJa ? "開く" : "Open";
+            }
+
+            // 3. update save button
+            Control[] saveBtns = FindControlsByPossibleNames("saveButton", "Save", "btnSave");
+            if (saveBtns.Length > 0 && saveBtns[0] is Button btnSave)
+            {
+                btnSave.Text = isJa ? "保存" : "Save";
+            }
+
+            // 4. update search / find button
+            Control[] findBtns = FindControlsByPossibleNames("findButton", "Find", "Search", "btnFind");
+            if (findBtns.Length > 0 && findBtns[0] is Button btnFind)
+            {
+                btnFind.Text = isJa ? "検索" : "Find";
+            }
+
+            // 5. update undo / back button
+            Control[] undoBtns = FindControlsByPossibleNames("undoFindButton", "backButton", "Back", "Undo", "btnUndo");
+            if (undoBtns.Length > 0 && undoBtns[0] is Button btnUndo)
+            {
+                btnUndo.Text = isJa ? "戻る" : "Back";
+                if (mainToolTip != null)
+                {
+                    mainToolTip.SetToolTip(btnUndo, isJa ? "前回の検索状態に戻す" : "Back");
+                }
+            }
+
+            // 6. update revert button if exists
+            Control[] revertBtns = FindControlsByPossibleNames("revertButton", "resetViewButton", "Revert");
+            if (revertBtns.Length > 0 && revertBtns[0] is Button btnRevert)
+            {
+                btnRevert.Text = isJa ? "元に戻す" : "Revert";
+            }
+
+            WriteOutputLog(isJa ? "言語を「日本語」に変更しました。" : "Language switched to English.");
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -268,11 +406,13 @@ namespace LogFormatter
                 }
 
                 RenderVirtualPageStream(tabInfo, 0);
-                WriteOutputLog($"Opened: {fileName}");
+                bool isJa = (currentLanguage == AppLanguage.Japanese);
+                WriteOutputLog(isJa ? $"開きました: {fileName}" : $"Opened: {fileName}");
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Open error for '{fileName}': {ex.Message}");
+                bool isJa = (currentLanguage == AppLanguage.Japanese);
+                WriteOutputLog(isJa ? $"開くエラー '{fileName}': {ex.Message}" : $"Open error '{fileName}': {ex.Message}");
             }
         }
 
@@ -357,7 +497,8 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Render error: {ex.Message}");
+                bool isJa = (currentLanguage == AppLanguage.Japanese);
+                WriteOutputLog(isJa ? $"描画エラー: {ex.Message}" : $"Render error: {ex.Message}");
             }
 
             lv.EndUpdate();
@@ -378,7 +519,8 @@ namespace LogFormatter
             }
 
             string zipName = Path.GetFileName(zipFilePath);
-            WriteOutputLog($"Extracting '{zipName}' (0%)...");
+            bool isJa = (currentLanguage == AppLanguage.Japanese);
+            WriteOutputLog(isJa ? $"解凍中 '{zipName}' (0%)..." : $"Extracting '{zipName}' (0%)...");
 
             try
             {
@@ -386,7 +528,7 @@ namespace LogFormatter
 
                 var progress = new Progress<int>(percent =>
                 {
-                    WriteOutputLog($"Extracting '{zipName}' progress: {percent}%");
+                    WriteOutputLog(isJa ? $"解凍進捗 [{zipName}]: {percent}%" : $"Extracting progress [{zipName}]: {percent}%");
                 });
 
                 var targetFiles = await Task.Run(() =>
@@ -443,7 +585,7 @@ namespace LogFormatter
 
                 if (targetFiles.Count == 0)
                 {
-                    WriteOutputLog($"No log files in '{zipName}'.");
+                    WriteOutputLog(isJa ? $"ログファイルが見つかりません '{zipName}'." : $"No log files in '{zipName}'.");
                     try { Directory.Delete(tempFolder, true); } catch { }
                     return;
                 }
@@ -455,7 +597,7 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"ZIP error: {ex.Message}");
+                WriteOutputLog(isJa ? $"ZIPエラー: {ex.Message}" : $"ZIP error: {ex.Message}");
             }
             finally
             {
@@ -470,8 +612,9 @@ namespace LogFormatter
         {
             using (var dialog = new CommonOpenFileDialog())
             {
+                bool isJa = (currentLanguage == AppLanguage.Japanese);
                 dialog.IsFolderPicker = true;
-                dialog.Title = "Choose Folder";
+                dialog.Title = isJa ? "フォルダを選択" : "Choose Folder";
                 dialog.EnsurePathExists = true;
 
                 if (dialog.ShowDialog() == CommonFileDialogResult.Ok)
@@ -499,7 +642,7 @@ namespace LogFormatter
 
                             if (filteredFiles.Count == 0)
                             {
-                                WriteOutputLog($"No files in '{targetDirectory}'.");
+                                WriteOutputLog(isJa ? $"対象ファイルが見つかりません '{targetDirectory}'." : $"No supported files in '{targetDirectory}'.");
                                 return;
                             }
 
@@ -511,265 +654,11 @@ namespace LogFormatter
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show(ex.Message, "Error");
+                        MessageBox.Show(ex.Message, isJa ? "エラー" : "Error");
                     }
                     finally
                     {
                         this.Cursor = Cursors.Default;
-                    }
-                }
-            }
-        }
-
-        private void RevertButton_Click(object sender, EventArgs e)
-        {
-            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
-            TabPage currentTab = tabControlFiles.SelectedTab;
-            if (!openedTabs.ContainsKey(currentTab)) return;
-            var tabInfo = openedTabs[currentTab];
-
-            if (currentTab == searchingTab)
-            {
-                MessageBox.Show("Search is currently running on this tab.", "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            tabInfo.ActiveFileCutoff = tabInfo.OriginalFileLength;
-            tabInfo.CutoffHistory.Clear();
-            tabInfo.SelectedPingLineIndex = -1;
-            tabInfo.CurrentViewStartIndex = 0;
-
-            if (tabInfo.VirtualScrollBar != null) tabInfo.VirtualScrollBar.Value = 0;
-
-            RenderVirtualPageStream(tabInfo, 0);
-            WriteOutputLog($"Reverted: '{Path.GetFileName(tabInfo.FilePath)}' restored to original length ({tabInfo.OriginalFileLength} bytes).", appendExtraSpace: true);
-        }
-
-        private void UndoFindButton_Click(object sender, EventArgs e)
-        {
-            ExecuteUndoFind();
-        }
-
-        private void ExecuteUndoFind()
-        {
-            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
-            TabPage currentTab = tabControlFiles.SelectedTab;
-            if (!openedTabs.ContainsKey(currentTab)) return;
-            var tabInfo = openedTabs[currentTab];
-
-            if (currentTab == searchingTab)
-            {
-                MessageBox.Show("Search is currently running on this tab.", "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            if (tabInfo.CutoffHistory.Count == 0)
-            {
-                WriteOutputLog("No search history to undo.", appendExtraSpace: true);
-                return;
-            }
-
-            tabInfo.ActiveFileCutoff = tabInfo.CutoffHistory.Pop();
-            tabInfo.SelectedPingLineIndex = -1;
-
-            long maxLineIndex = GetMaxScrollableLineIndex(tabInfo);
-            if (tabInfo.CurrentViewStartIndex > maxLineIndex)
-            {
-                tabInfo.CurrentViewStartIndex = Math.Max(0, maxLineIndex);
-            }
-
-            if (tabInfo.VirtualScrollBar != null && maxLineIndex > 0)
-            {
-                int maxScrollVal = tabInfo.VirtualScrollBar.Maximum - tabInfo.VirtualScrollBar.LargeChange + 1;
-                double ratio = (double)tabInfo.CurrentViewStartIndex / maxLineIndex;
-                tabInfo.VirtualScrollBar.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
-            }
-
-            RenderVirtualPageStream(tabInfo, tabInfo.CurrentViewStartIndex);
-            WriteOutputLog("Restored", appendExtraSpace: true);
-        }
-
-        private void SaveButton_Click(object sender, EventArgs e)
-        {
-            if (searchingTab != null)
-            {
-                MessageBox.Show("Search in progress. Please wait or cancel first.", "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            var modifiedTabs = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
-            if (modifiedTabs.Count == 0)
-            {
-                MessageBox.Show("No edited files to save.", "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            ExecuteSaveWorkflow(modifiedTabs);
-        }
-
-        private bool ExecuteSaveWorkflow(List<FileTabInfo> targetTabs)
-        {
-            if (targetTabs == null || targetTabs.Count == 0) return true;
-
-            using (SaveModeDialog modeDlg = new SaveModeDialog())
-            {
-                if (modeDlg.ShowDialog(this) != DialogResult.OK || modeDlg.UserChoice == SaveModeDialog.SaveChoice.Cancel)
-                {
-                    return false;
-                }
-
-                bool requestedOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
-
-                foreach (var tabInfo in targetTabs)
-                {
-                    string currentFileName = Path.GetFileName(tabInfo.FilePath);
-                    try
-                    {
-                        string targetPath = tabInfo.FilePath;
-                        bool isZipExtractedFile = !string.IsNullOrEmpty(tabInfo.TempDirectoryToCleanup);
-                        bool isOverwrite = requestedOverwrite;
-
-                        if (isZipExtractedFile && isOverwrite)
-                        {
-                            MessageBox.Show($"'{currentFileName}' is from ZIP. Overwrite disallowed.\nPlease select Save As location.",
-                                "Save Action Redirected", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            isOverwrite = false;
-                        }
-
-                        if (!isOverwrite)
-                        {
-                            using (SaveFileDialog sfd = new SaveFileDialog())
-                            {
-                                sfd.Title = $"Save As - {currentFileName}";
-                                sfd.Filter = "Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|All Files (*.*)|*.*";
-                                sfd.InitialDirectory = isZipExtractedFile ? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) : Path.GetDirectoryName(tabInfo.FilePath);
-                                sfd.FileName = Path.GetFileNameWithoutExtension(tabInfo.FilePath) + "_trimmed" + Path.GetExtension(tabInfo.FilePath);
-
-                                if (sfd.ShowDialog(this) == DialogResult.OK)
-                                {
-                                    targetPath = sfd.FileName;
-                                }
-                                else
-                                {
-                                    continue;
-                                }
-                            }
-                        }
-
-                        string tempPath = targetPath + ".tmp";
-                        using (FileStream src = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                        using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
-                        {
-                            byte[] buffer = new byte[64 * 1024];
-                            long bytesLeft = tabInfo.ActiveFileCutoff;
-                            long totalToSave = bytesLeft;
-                            int lastReportedPercent = 0;
-
-                            while (bytesLeft > 0)
-                            {
-                                int read = src.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesLeft));
-                                if (read <= 0) break;
-                                dst.Write(buffer, 0, read);
-                                bytesLeft -= read;
-
-                                if (totalToSave > 0)
-                                {
-                                    int currentPercent = (int)(((totalToSave - bytesLeft) / (double)totalToSave) * 100);
-                                    if (currentPercent - lastReportedPercent >= 25 || currentPercent == 100)
-                                    {
-                                        lastReportedPercent = currentPercent;
-                                        WriteOutputLog($"Saving '{currentFileName}' progress: {currentPercent}%");
-                                    }
-                                }
-                            }
-                        }
-
-                        TabPage activeTabKey = openedTabs.FirstOrDefault(x => x.Value == tabInfo).Key;
-                        string newFileName = Path.GetFileName(targetPath);
-
-                        if (isOverwrite)
-                        {
-                            File.Delete(tabInfo.FilePath);
-                            File.Move(tempPath, tabInfo.FilePath);
-                            tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
-                            tabInfo.CutoffHistory.Clear();
-                            WriteOutputLog($"Saved: {newFileName}");
-                        }
-                        else
-                        {
-                            if (File.Exists(targetPath)) File.Delete(targetPath);
-                            File.Move(tempPath, targetPath);
-
-                            if (isZipExtractedFile)
-                            {
-                                ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
-                                tabInfo.TempDirectoryToCleanup = null;
-                            }
-
-                            tabInfo.FilePath = targetPath;
-                            tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
-                            tabInfo.CutoffHistory.Clear();
-
-                            if (activeTabKey != null)
-                            {
-                                activeTabKey.Text = newFileName;
-                            }
-
-                            if (fileListBox != null)
-                            {
-                                int itemIdx = fileListBox.Items.IndexOf(activeTabKey);
-                                if (itemIdx >= 0)
-                                {
-                                    fileListBox.Items[itemIdx] = activeTabKey;
-                                }
-                            }
-
-                            WriteOutputLog($"Saved as: {targetPath}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        WriteOutputLog($"Save failed for {currentFileName}: {ex.Message}");
-                    }
-                }
-
-                return true;
-            }
-        }
-
-        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
-        {
-            var modifiedList = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
-            if (modifiedList.Count > 0)
-            {
-                var result = MessageBox.Show($"You have {modifiedList.Count} edited file(s). Save before exit?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-                if (result == DialogResult.Yes)
-                {
-                    if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
-                }
-                else if (result == DialogResult.Cancel)
-                {
-                    e.Cancel = true;
-                }
-            }
-
-            foreach (var tabInfo in openedTabs.Values.ToList())
-            {
-                ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
-            }
-        }
-
-        private void ReleaseZipTempFolder(string folderPath)
-        {
-            if (!string.IsNullOrEmpty(folderPath) && zipTempFolderRefCount.ContainsKey(folderPath))
-            {
-                zipTempFolderRefCount[folderPath]--;
-                if (zipTempFolderRefCount[folderPath] <= 0)
-                {
-                    zipTempFolderRefCount.Remove(folderPath);
-                    if (Directory.Exists(folderPath))
-                    {
-                        try { Directory.Delete(folderPath, true); } catch { }
                     }
                 }
             }
@@ -829,9 +718,11 @@ namespace LogFormatter
 
         private async void FindButton_Click(object sender, EventArgs e)
         {
+            bool isJa = (currentLanguage == AppLanguage.Japanese);
+
             if (searchTextBox == null || string.IsNullOrWhiteSpace(searchTextBox.Text))
             {
-                WriteOutputLog("Warning: Search pattern is empty.", appendExtraSpace: true);
+                WriteOutputLog(isJa ? "警告: 検索パターンが空です。" : "Warning: Search pattern is empty.", appendExtraSpace: true);
                 return;
             }
 
@@ -852,7 +743,7 @@ namespace LogFormatter
 
             if (!ParseInputToBytePattern(rawInput, out List<byte?> targetPattern))
             {
-                WriteOutputLog($"Error: Invalid input pattern '{rawInput}'.", appendExtraSpace: true);
+                WriteOutputLog(isJa ? $"エラー: 無効な検索パターン '{rawInput}'." : $"Error: Invalid pattern '{rawInput}'.", appendExtraSpace: true);
                 if (btn != null) btn.Enabled = true;
                 searchingTab = null;
                 return;
@@ -861,7 +752,7 @@ namespace LogFormatter
             tabInfo.CurrentSearchKeyword = rawInput;
             string fileName = Path.GetFileName(tabInfo.FilePath);
 
-            WriteOutputLog($"Searching for '{rawInput}' in [{fileName}] (0%)...");
+            WriteOutputLog(isJa ? $"検索中 '{rawInput}' [{fileName}] (0%)..." : $"Searching for '{rawInput}' in [{fileName}] (0%)...");
 
             try
             {
@@ -869,7 +760,7 @@ namespace LogFormatter
 
                 var progress = new Progress<int>(percent =>
                 {
-                    WriteOutputLog($"Scanning [{fileName}] progress: {percent}%");
+                    WriteOutputLog(isJa ? $"検索進捗 [{fileName}]: {percent}%" : $"Scanning progress [{fileName}]: {percent}%");
                 });
 
                 var searchResults = await Task.Run(() =>
@@ -963,8 +854,8 @@ namespace LogFormatter
 
                 if (searchResults.Count == 0)
                 {
-                    WriteOutputLog($"Scanning [{fileName}] progress: 100%");
-                    WriteOutputLog($"No match found for '{rawInput}'.", appendExtraSpace: true);
+                    WriteOutputLog(isJa ? $"検索進捗 [{fileName}]: 100%" : $"Scanning progress [{fileName}]: 100%");
+                    WriteOutputLog(isJa ? $"一致が見つかりません: '{rawInput}'." : $"No match found for: '{rawInput}'.", appendExtraSpace: true);
                     return;
                 }
 
@@ -983,17 +874,300 @@ namespace LogFormatter
             }
             catch (OperationCanceledException)
             {
-                WriteOutputLog("Search cancelled.", appendExtraSpace: true);
+                WriteOutputLog(isJa ? "検索がキャンセルされました。" : "Search cancelled.", appendExtraSpace: true);
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Search error: {ex.Message}", appendExtraSpace: true);
+                WriteOutputLog(isJa ? $"検索エラー: {ex.Message}" : $"Search error: {ex.Message}", appendExtraSpace: true);
             }
             finally
             {
                 if (btn != null) btn.Enabled = true;
                 if (searchingTab == currentTab) searchingTab = null;
             }
+        }
+
+        private void RevertButton_Click(object sender, EventArgs e)
+        {
+            bool isJa = (currentLanguage == AppLanguage.Japanese);
+
+            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+            TabPage currentTab = tabControlFiles.SelectedTab;
+            if (!openedTabs.ContainsKey(currentTab)) return;
+            var tabInfo = openedTabs[currentTab];
+
+            if (currentTab == searchingTab)
+            {
+                MessageBox.Show(isJa ? "検索が実行中です。" : "Search is currently running on this tab.", isJa ? "処理中" : "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            tabInfo.ActiveFileCutoff = tabInfo.OriginalFileLength;
+            tabInfo.CutoffHistory.Clear();
+            tabInfo.SelectedPingLineIndex = -1;
+            tabInfo.CurrentViewStartIndex = 0;
+
+            if (tabInfo.VirtualScrollBar != null) tabInfo.VirtualScrollBar.Value = 0;
+
+            RenderVirtualPageStream(tabInfo, 0);
+            WriteOutputLog(isJa ? $"元に戻しました: '{Path.GetFileName(tabInfo.FilePath)}' ({tabInfo.OriginalFileLength} bytes)." : $"Reverted: '{Path.GetFileName(tabInfo.FilePath)}' restored ({tabInfo.OriginalFileLength} bytes).", appendExtraSpace: true);
+        }
+
+        private void UndoFindButton_Click(object sender, EventArgs e)
+        {
+            ExecuteUndoFind();
+        }
+
+        private void ExecuteUndoFind()
+        {
+            bool isJa = (currentLanguage == AppLanguage.Japanese);
+
+            if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
+            TabPage currentTab = tabControlFiles.SelectedTab;
+            if (!openedTabs.ContainsKey(currentTab)) return;
+            var tabInfo = openedTabs[currentTab];
+
+            if (currentTab == searchingTab)
+            {
+                MessageBox.Show(isJa ? "検索が実行中です。" : "Search is currently running on this tab.", isJa ? "処理中" : "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (tabInfo.CutoffHistory.Count == 0)
+            {
+                WriteOutputLog(isJa ? "警告: 戻す履歴がありません。" : "Warning: No search history to undo.", appendExtraSpace: true);
+                return;
+            }
+
+            tabInfo.ActiveFileCutoff = tabInfo.CutoffHistory.Pop();
+            tabInfo.SelectedPingLineIndex = -1;
+
+            long maxLineIndex = GetMaxScrollableLineIndex(tabInfo);
+            if (tabInfo.CurrentViewStartIndex > maxLineIndex)
+            {
+                tabInfo.CurrentViewStartIndex = Math.Max(0, maxLineIndex);
+            }
+
+            if (tabInfo.VirtualScrollBar != null && maxLineIndex > 0)
+            {
+                int maxScrollVal = tabInfo.VirtualScrollBar.Maximum - tabInfo.VirtualScrollBar.LargeChange + 1;
+                double ratio = (double)tabInfo.CurrentViewStartIndex / maxLineIndex;
+                tabInfo.VirtualScrollBar.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
+            }
+
+            RenderVirtualPageStream(tabInfo, tabInfo.CurrentViewStartIndex);
+            WriteOutputLog(isJa ? "元に戻す" : "Restored", appendExtraSpace: true);
+        }
+
+        private void SaveButton_Click(object sender, EventArgs e)
+        {
+            bool isJa = (currentLanguage == AppLanguage.Japanese);
+
+            if (searchingTab != null)
+            {
+                MessageBox.Show(isJa ? "検索中です。お待ちください。" : "Search in progress. Please wait first.", isJa ? "処理中" : "Busy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var modifiedTabs = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
+            if (modifiedTabs.Count == 0)
+            {
+                MessageBox.Show(isJa ? "保存する変更済みファイルがありません。" : "No edited files to save.", isJa ? "通知" : "Notification", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            ExecuteSaveWorkflow(modifiedTabs);
+        }
+
+        private bool ExecuteSaveWorkflow(List<FileTabInfo> targetTabs)
+        {
+            if (targetTabs == null || targetTabs.Count == 0) return true;
+
+            using (SaveModeDialog modeDlg = new SaveModeDialog(currentLanguage))
+            {
+                if (modeDlg.ShowDialog(this) != DialogResult.OK || modeDlg.UserChoice == SaveModeDialog.SaveChoice.Cancel)
+                {
+                    return false;
+                }
+
+                bool requestedOverwrite = (modeDlg.UserChoice == SaveModeDialog.SaveChoice.SaveOverwrite);
+                bool isJa = (currentLanguage == AppLanguage.Japanese);
+
+                foreach (var tabInfo in targetTabs)
+                {
+                    string currentFileName = Path.GetFileName(tabInfo.FilePath);
+                    try
+                    {
+                        string targetPath = tabInfo.FilePath;
+                        bool isZipExtractedFile = !string.IsNullOrEmpty(tabInfo.TempDirectoryToCleanup);
+                        bool isOverwrite = requestedOverwrite;
+
+                        if (isZipExtractedFile && isOverwrite)
+                        {
+                            MessageBox.Show(isJa ? $"'{currentFileName}' はZIP由来です。上書き不可。\n保存先を選択してください。" : $"'{currentFileName}' is from ZIP. Overwrite disallowed.\nPlease select Save As location.",
+                                isJa ? "保存先変更" : "Save Redirected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            isOverwrite = false;
+                        }
+
+                        if (!isOverwrite)
+                        {
+                            using (SaveFileDialog sfd = new SaveFileDialog())
+                            {
+                                sfd.Title = isJa ? $"名前を付けて保存 - {currentFileName}" : $"Save As - {currentFileName}";
+                                sfd.Filter = "Log Files (*.log)|*.log|Bin Files (*.bin)|*.bin|All Files (*.*)|*.*";
+                                sfd.InitialDirectory = isZipExtractedFile ? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) : Path.GetDirectoryName(tabInfo.FilePath);
+                                sfd.FileName = Path.GetFileNameWithoutExtension(tabInfo.FilePath) + "_trimmed" + Path.GetExtension(tabInfo.FilePath);
+
+                                if (sfd.ShowDialog(this) == DialogResult.OK)
+                                {
+                                    targetPath = sfd.FileName;
+                                }
+                                else
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        string tempPath = targetPath + ".tmp";
+                        using (FileStream src = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
+                        {
+                            byte[] buffer = new byte[64 * 1024];
+                            long bytesLeft = tabInfo.ActiveFileCutoff;
+                            long totalToSave = bytesLeft;
+                            int lastReportedPercent = 0;
+
+                            while (bytesLeft > 0)
+                            {
+                                int read = src.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesLeft));
+                                if (read <= 0) break;
+                                dst.Write(buffer, 0, read);
+                                bytesLeft -= read;
+
+                                if (totalToSave > 0)
+                                {
+                                    int currentPercent = (int)(((totalToSave - bytesLeft) / (double)totalToSave) * 100);
+                                    if (currentPercent - lastReportedPercent >= 25 || currentPercent == 100)
+                                    {
+                                        lastReportedPercent = currentPercent;
+                                        WriteOutputLog(isJa ? $"保存進捗 [{currentFileName}]: {currentPercent}%" : $"Saving progress [{currentFileName}]: {currentPercent}%");
+                                    }
+                                }
+                            }
+                        }
+
+                        TabPage activeTabKey = openedTabs.FirstOrDefault(x => x.Value == tabInfo).Key;
+                        string newFileName = Path.GetFileName(targetPath);
+
+                        if (isOverwrite)
+                        {
+                            File.Delete(tabInfo.FilePath);
+                            File.Move(tempPath, tabInfo.FilePath);
+                            tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
+                            tabInfo.CutoffHistory.Clear();
+                            WriteOutputLog(isJa ? $"保存しました: {newFileName}" : $"Saved: {newFileName}");
+                        }
+                        else
+                        {
+                            if (File.Exists(targetPath)) File.Delete(targetPath);
+                            File.Move(tempPath, targetPath);
+
+                            if (isZipExtractedFile)
+                            {
+                                ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
+                                tabInfo.TempDirectoryToCleanup = null;
+                            }
+
+                            tabInfo.FilePath = targetPath;
+                            tabInfo.OriginalFileLength = tabInfo.ActiveFileCutoff;
+                            tabInfo.CutoffHistory.Clear();
+
+                            if (activeTabKey != null)
+                            {
+                                activeTabKey.Text = newFileName;
+                            }
+
+                            if (fileListBox != null)
+                            {
+                                int itemIdx = fileListBox.Items.IndexOf(activeTabKey);
+                                if (itemIdx >= 0)
+                                {
+                                    fileListBox.Items[itemIdx] = activeTabKey;
+                                }
+                            }
+
+                            WriteOutputLog(isJa ? $"名前を付けて保存しました: {targetPath}" : $"Saved as: {targetPath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        WriteOutputLog(isJa ? $"保存失敗 [{currentFileName}]: {ex.Message}" : $"Save failed [{currentFileName}]: {ex.Message}");
+                    }
+                }
+
+                return true;
+            }
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            bool isJa = (currentLanguage == AppLanguage.Japanese);
+            var modifiedList = openedTabs.Values.Where(t => t.ActiveFileCutoff != t.OriginalFileLength).ToList();
+            if (modifiedList.Count > 0)
+            {
+                var result = MessageBox.Show(isJa ? $"変更されたファイルが {modifiedList.Count} 件あります。保存しますか？" : $"You have {modifiedList.Count} edited file(s). Save before exit?",
+                    isJa ? "未保存の変更" : "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes)
+                {
+                    if (!ExecuteSaveWorkflow(modifiedList)) e.Cancel = true;
+                }
+                else if (result == DialogResult.Cancel)
+                {
+                    e.Cancel = true;
+                }
+            }
+
+            foreach (var tabInfo in openedTabs.Values.ToList())
+            {
+                ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
+            }
+        }
+
+        private void ReleaseZipTempFolder(string folderPath)
+        {
+            if (!string.IsNullOrEmpty(folderPath) && zipTempFolderRefCount.ContainsKey(folderPath))
+            {
+                zipTempFolderRefCount[folderPath]--;
+                if (zipTempFolderRefCount[folderPath] <= 0)
+                {
+                    zipTempFolderRefCount.Remove(folderPath);
+                    if (Directory.Exists(folderPath))
+                    {
+                        try { Directory.Delete(folderPath, true); } catch { }
+                    }
+                }
+            }
+        }
+
+        private void CloseTabInfo(TabPage tab)
+        {
+            if (tab == null || !openedTabs.ContainsKey(tab)) return;
+
+            if (tab == searchingTab)
+            {
+                searchCts?.Cancel();
+                searchingTab = null;
+            }
+
+            var tabInfo = openedTabs[tab];
+            ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
+
+            if (fileListBox != null) fileListBox.Items.Remove(tab);
+            openedTabs.Remove(tab);
+            if (tabControlFiles != null) tabControlFiles.TabPages.Remove(tab);
+
+            tab.Dispose();
         }
 
         private void NavigateToLine(FileTabInfo tabInfo, long targetLineIndex)
@@ -1043,7 +1217,8 @@ namespace LogFormatter
             }
             catch (Exception ex)
             {
-                WriteOutputLog($"Nav error: {ex.Message}");
+                bool isJa = (currentLanguage == AppLanguage.Japanese);
+                WriteOutputLog(isJa ? $"移動エラー: {ex.Message}" : $"Nav error: {ex.Message}");
             }
         }
 
@@ -1057,14 +1232,18 @@ namespace LogFormatter
             }
 
             Color msgColor = Color.LightGray;
-            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Offset:") || content.Contains("Extracting") || content.Contains("Reverted"))
+            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("開きました") || content.Contains("Saved") || content.Contains("保存しました") || content.Contains("Offset:") || content.Contains("Extracting") || content.Contains("解凍中") || content.Contains("Reverted") || content.Contains("元に戻しました"))
             {
                 msgColor = Color.LimeGreen;
             }
             else if (content.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0
+                  || content.IndexOf("エラー", StringComparison.OrdinalIgnoreCase) >= 0
                   || content.IndexOf("failed", StringComparison.OrdinalIgnoreCase) >= 0
+                  || content.IndexOf("失敗", StringComparison.OrdinalIgnoreCase) >= 0
                   || content.IndexOf("disallowed", StringComparison.OrdinalIgnoreCase) >= 0
-                  || content.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0)
+                  || content.IndexOf("不可", StringComparison.OrdinalIgnoreCase) >= 0
+                  || content.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0
+                  || content.IndexOf("警告", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 msgColor = Color.Tomato;
             }
@@ -1094,7 +1273,8 @@ namespace LogFormatter
         {
             using (OpenFileDialog ofd = new OpenFileDialog())
             {
-                ofd.Title = "Open Files";
+                bool isJa = (currentLanguage == AppLanguage.Japanese);
+                ofd.Title = isJa ? "ファイルを開く" : "Open Files";
                 ofd.Filter = "All Supported (*.log;*.bin;*.zip)|*.log;*.bin;*.zip|ZIP Files (*.zip)|*.zip|Log Files (*.log)|*.log|BIN Files (*.bin)|*.bin|All Files (*.*)|*.*";
                 ofd.Multiselect = true;
                 ofd.RestoreDirectory = true;
@@ -1222,26 +1402,6 @@ namespace LogFormatter
             }
         }
 
-        private void CloseTabInfo(TabPage tab)
-        {
-            if (tab == null || !openedTabs.ContainsKey(tab)) return;
-
-            if (tab == searchingTab)
-            {
-                searchCts?.Cancel();
-                searchingTab = null;
-            }
-
-            var tabInfo = openedTabs[tab];
-            ReleaseZipTempFolder(tabInfo.TempDirectoryToCleanup);
-
-            if (fileListBox != null) fileListBox.Items.Remove(tab);
-            openedTabs.Remove(tab);
-            if (tabControlFiles != null) tabControlFiles.TabPages.Remove(tab);
-
-            tab.Dispose();
-        }
-
         private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
     }
 
@@ -1282,9 +1442,11 @@ namespace LogFormatter
         public enum SaveChoice { SaveOverwrite, SaveAsNew, Cancel }
         public SaveChoice UserChoice { get; private set; } = SaveChoice.Cancel;
 
-        public SaveModeDialog()
+        public SaveModeDialog(Form1.AppLanguage lang = Form1.AppLanguage.English)
         {
-            this.Text = "Select Save Mode";
+            bool isJa = (lang == Form1.AppLanguage.Japanese);
+
+            this.Text = isJa ? "保存モードの選択" : "Select Save Mode";
             this.Size = new Size(380, 160);
             this.StartPosition = FormStartPosition.CenterParent;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -1293,33 +1455,33 @@ namespace LogFormatter
 
             Label lblMsg = new Label
             {
-                Text = "How do you want to save the selected files?",
+                Text = isJa ? "ファイルの保存方法を選択してください。" : "How do you want to save the selected files?",
                 Location = new Point(20, 20),
                 AutoSize = true,
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Regular)
+                Font = new Font("Segoe UI", 9.0F, FontStyle.Regular)
             };
 
             Button btnSave = new Button
             {
-                Text = "Save",
+                Text = isJa ? "保存" : "Save",
                 Location = new Point(20, 65),
-                Size = new Size(115, 32)
+                Size = new Size(100, 32)
             };
             btnSave.Click += (s, e) => { UserChoice = SaveChoice.SaveOverwrite; this.DialogResult = DialogResult.OK; };
 
             Button btnSaveAs = new Button
             {
-                Text = "Save As...",
-                Location = new Point(141, 65),
-                Size = new Size(125, 32)
+                Text = isJa ? "名前を付けて保存..." : "Save As...",
+                Location = new Point(126, 65),
+                Size = new Size(140, 32)
             };
             btnSaveAs.Click += (s, e) => { UserChoice = SaveChoice.SaveAsNew; this.DialogResult = DialogResult.OK; };
 
             Button btnCancel = new Button
             {
-                Text = "Cancel",
+                Text = isJa ? "キャンセル" : "Cancel",
                 Location = new Point(272, 65),
-                Size = new Size(75, 32)
+                Size = new Size(80, 32)
             };
             btnCancel.Click += (s, e) => { UserChoice = SaveChoice.Cancel; this.DialogResult = DialogResult.Cancel; };
 
