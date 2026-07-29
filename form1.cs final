@@ -14,38 +14,6 @@ using System.Windows.Forms;
 
 namespace LogFormatter
 {
-    public class SearchResultItem
-    {
-        public long LineIndex { get; set; }
-        public string Offset { get; set; }
-        public string HexData { get; set; }
-        public string DecodedText { get; set; }
-        public bool MatchedInHex { get; set; }
-    }
-
-    public class CustomListView : ListView
-    {
-        private const int WM_NCCALCSIZE = 0x0083;
-        private const int SB_VERT = 1;
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
-
-        public CustomListView()
-        {
-            this.DoubleBuffered = true;
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            base.WndProc(ref m);
-            if (m.Msg == WM_NCCALCSIZE)
-            {
-                ShowScrollBar(this.Handle, SB_VERT, false);
-            }
-        }
-    }
-
     public partial class Form1 : Form
     {
         private class FileTabInfo
@@ -62,8 +30,8 @@ namespace LogFormatter
             public Stack<long> CutoffHistory { get; set; } = new Stack<long>();
         }
 
-        private Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
-        private Dictionary<string, int> zipTempFolderRefCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<TabPage, FileTabInfo> openedTabs = new Dictionary<TabPage, FileTabInfo>();
+        private readonly Dictionary<string, int> zipTempFolderRefCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         private const int BYTES_PER_LINE = 16;
         private const int MAX_DISPLAY_LINES = 50;
@@ -71,6 +39,9 @@ namespace LogFormatter
         private static readonly Encoding ShiftJisEncoding = Encoding.GetEncoding("Shift-JIS");
         private CancellationTokenSource searchCts;
         private TabPage searchingTab = null;
+
+        private int activeZipTasks = 0;
+        private ToolTip mainToolTip;
 
         public Form1()
         {
@@ -106,26 +77,35 @@ namespace LogFormatter
                     rtbOutput.MouseClick += RtbOutput_MouseClick;
                 }
 
-                Control[] resetBtns = this.Controls.Find("resetViewButton", true);
-                if (resetBtns.Length > 0 && resetBtns[0] is Button btnReset)
+                Control[] revertBtns = this.Controls.Find("revertButton", true);
+                if (revertBtns.Length == 0) revertBtns = this.Controls.Find("resetViewButton", true);
+                if (revertBtns.Length > 0 && revertBtns[0] is Button btnRevert)
                 {
-                    btnReset.Click += ResetViewButton_Click;
+                    btnRevert.Click += RevertButton_Click;
                 }
 
                 Control[] undoBtns = this.Controls.Find("undoFindButton", true);
                 if (undoBtns.Length > 0 && undoBtns[0] is Button btnUndo)
                 {
                     btnUndo.Click += UndoFindButton_Click;
+                    mainToolTip = new ToolTip();
+                    mainToolTip.SetToolTip(btnUndo, "Undo last search step");
                 }
             };
 
             this.FormClosing += Form1_FormClosing;
+            this.FormClosed += (s, e) => mainToolTip?.Dispose();
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (keyData == (Keys.Control | Keys.Z))
             {
+                if (this.ActiveControl is TextBox || this.ActiveControl is RichTextBox)
+                {
+                    return base.ProcessCmdKey(ref msg, keyData);
+                }
+
                 ExecuteUndoFind();
                 return true;
             }
@@ -174,115 +154,126 @@ namespace LogFormatter
             long fileLength = fi.Length;
             string fileName = fi.Name;
 
-            TabPage newTab = new TabPage(fileName);
-            Panel containerPanel = new Panel() { Dock = DockStyle.Fill };
-
-            CustomListView newListView = new CustomListView();
-            newListView.Dock = DockStyle.Fill;
-            newListView.View = View.Details;
-            newListView.Font = new Font("Consolas", 10F);
-            newListView.GridLines = true;
-            newListView.FullRowSelect = true;
-            newListView.HideSelection = false;
-
-            newListView.Columns.Add("Offset", 110, HorizontalAlignment.Left);
-            newListView.Columns.Add("Hex Data", 600, HorizontalAlignment.Left);
-            newListView.Columns.Add("Decoded Text", -2, HorizontalAlignment.Left);
-
-            VScrollBar vScroll = new VScrollBar();
-            vScroll.Name = "vScroll";
-            vScroll.Dock = DockStyle.Right;
-            vScroll.Minimum = 0;
-            vScroll.Maximum = VIRTUAL_SCROLL_SCALE;
-            vScroll.SmallChange = 1;
-            vScroll.LargeChange = 10;
-
-            containerPanel.Controls.Add(newListView);
-            containerPanel.Controls.Add(vScroll);
-            newTab.Controls.Add(containerPanel);
-
-            FileTabInfo tabInfo = new FileTabInfo
+            try
             {
-                FilePath = filePath,
-                OriginalFileLength = fileLength,
-                ActiveFileCutoff = fileLength,
-                DisplayGrid = newListView,
-                VirtualScrollBar = vScroll,
-                TempDirectoryToCleanup = zipTempFolder
-            };
-            openedTabs.Add(newTab, tabInfo);
+                TabPage newTab = new TabPage(fileName);
+                Panel containerPanel = new Panel() { Dock = DockStyle.Fill };
 
-            if (!string.IsNullOrEmpty(zipTempFolder))
-            {
-                if (zipTempFolderRefCount.ContainsKey(zipTempFolder))
-                    zipTempFolderRefCount[zipTempFolder]++;
-                else
-                    zipTempFolderRefCount[zipTempFolder] = 1;
-            }
-
-            newListView.MouseEnter += (s, e) => {
-                if (!newListView.Focused) newListView.Focus();
-            };
-
-            newListView.MouseWheel += (s, e) => {
-                if (!newListView.Focused) newListView.Focus();
-
-                long totalLines = GetMaxScrollableLineIndex(tabInfo);
-                if (totalLines <= 0) return;
-
-                int linesDelta = (e.Delta / 120) * 3;
-                long targetLine = tabInfo.CurrentViewStartIndex - linesDelta;
-
-                if (targetLine < 0) targetLine = 0;
-                if (targetLine > totalLines) targetLine = totalLines;
-
-                tabInfo.CurrentViewStartIndex = targetLine;
-
-                int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
-                double ratio = (double)targetLine / totalLines;
-                vScroll.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
-
-                RenderVirtualPageStream(tabInfo, targetLine);
-            };
-
-            vScroll.Scroll += (s, e) => {
-                long totalLines = GetMaxScrollableLineIndex(tabInfo);
-                if (totalLines <= 0) return;
-
-                int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
-                int val = e.NewValue;
-                if (val < vScroll.Minimum) val = vScroll.Minimum;
-                if (val > maxScrollVal) val = maxScrollVal;
-
-                double ratio = (double)val / maxScrollVal;
-                long targetLine = (long)Math.Floor(ratio * totalLines);
-
-                tabInfo.CurrentViewStartIndex = targetLine;
-                RenderVirtualPageStream(tabInfo, targetLine);
-            };
-
-            newListView.MouseClick += (s, e) => {
-                if (newListView.SelectedIndices.Count > 0)
+                CustomListView newListView = new CustomListView
                 {
-                    int selectedIndex = newListView.SelectedIndices[0];
-                    tabInfo.SelectedPingLineIndex = tabInfo.CurrentViewStartIndex + selectedIndex;
-                    RenderVirtualPageStream(tabInfo, tabInfo.CurrentViewStartIndex);
+                    Dock = DockStyle.Fill,
+                    View = View.Details,
+                    Font = new Font("Consolas", 10F),
+                    GridLines = true,
+                    FullRowSelect = true,
+                    HideSelection = false
+                };
+
+                newListView.Columns.Add("Offset", 110, HorizontalAlignment.Left);
+                newListView.Columns.Add("Hex Data", 600, HorizontalAlignment.Left);
+                newListView.Columns.Add("Decoded Text", -2, HorizontalAlignment.Left);
+
+                VScrollBar vScroll = new VScrollBar
+                {
+                    Name = "vScroll",
+                    Dock = DockStyle.Right,
+                    Minimum = 0,
+                    Maximum = VIRTUAL_SCROLL_SCALE,
+                    SmallChange = 1,
+                    LargeChange = 10
+                };
+
+                containerPanel.Controls.Add(newListView);
+                containerPanel.Controls.Add(vScroll);
+                newTab.Controls.Add(containerPanel);
+
+                FileTabInfo tabInfo = new FileTabInfo
+                {
+                    FilePath = filePath,
+                    OriginalFileLength = fileLength,
+                    ActiveFileCutoff = fileLength,
+                    DisplayGrid = newListView,
+                    VirtualScrollBar = vScroll,
+                    TempDirectoryToCleanup = zipTempFolder
+                };
+                openedTabs.Add(newTab, tabInfo);
+
+                if (!string.IsNullOrEmpty(zipTempFolder))
+                {
+                    if (zipTempFolderRefCount.ContainsKey(zipTempFolder))
+                        zipTempFolderRefCount[zipTempFolder]++;
+                    else
+                        zipTempFolderRefCount[zipTempFolder] = 1;
                 }
-            };
 
-            if (tabControlFiles != null)
-            {
-                tabControlFiles.TabPages.Add(newTab);
-                tabControlFiles.SelectedTab = newTab;
+                newListView.MouseEnter += (s, e) => {
+                    if (!newListView.Focused) newListView.Focus();
+                };
+
+                newListView.MouseWheel += (s, e) => {
+                    if (!newListView.Focused) newListView.Focus();
+
+                    long totalLines = GetMaxScrollableLineIndex(tabInfo);
+                    if (totalLines <= 0) return;
+
+                    int linesDelta = (e.Delta / 120) * 3;
+                    long targetLine = tabInfo.CurrentViewStartIndex - linesDelta;
+
+                    if (targetLine < 0) targetLine = 0;
+                    if (targetLine > totalLines) targetLine = totalLines;
+
+                    tabInfo.CurrentViewStartIndex = targetLine;
+
+                    int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
+                    double ratio = (double)targetLine / totalLines;
+                    vScroll.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
+
+                    RenderVirtualPageStream(tabInfo, targetLine);
+                };
+
+                vScroll.Scroll += (s, e) => {
+                    long totalLines = GetMaxScrollableLineIndex(tabInfo);
+                    if (totalLines <= 0) return;
+
+                    int maxScrollVal = vScroll.Maximum - vScroll.LargeChange + 1;
+                    int val = e.NewValue;
+                    if (val < vScroll.Minimum) val = vScroll.Minimum;
+                    if (val > maxScrollVal) val = maxScrollVal;
+
+                    double ratio = (double)val / maxScrollVal;
+                    long targetLine = (long)Math.Floor(ratio * totalLines);
+
+                    tabInfo.CurrentViewStartIndex = targetLine;
+                    RenderVirtualPageStream(tabInfo, targetLine);
+                };
+
+                newListView.MouseClick += (s, e) => {
+                    if (newListView.SelectedIndices.Count > 0)
+                    {
+                        int selectedIndex = newListView.SelectedIndices[0];
+                        tabInfo.SelectedPingLineIndex = tabInfo.CurrentViewStartIndex + selectedIndex;
+                        RenderVirtualPageStream(tabInfo, tabInfo.CurrentViewStartIndex);
+                    }
+                };
+
+                if (tabControlFiles != null)
+                {
+                    tabControlFiles.TabPages.Add(newTab);
+                    tabControlFiles.SelectedTab = newTab;
+                }
+
+                if (fileListBox != null)
+                {
+                    fileListBox.Items.Add(newTab);
+                }
+
+                RenderVirtualPageStream(tabInfo, 0);
+                WriteOutputLog($"Opened: {fileName}");
             }
-
-            if (fileListBox != null)
+            catch (Exception ex)
             {
-                fileListBox.Items.Add(newTab);
+                WriteOutputLog($"Open error for '{fileName}': {ex.Message}");
             }
-
-            RenderVirtualPageStream(tabInfo, 0);
-            WriteOutputLog($"Opened: {fileName}");
         }
 
         private void RenderVirtualPageStream(FileTabInfo tabInfo, long startIndex)
@@ -295,14 +286,14 @@ namespace LogFormatter
 
             try
             {
-                long startByteOffset = startIndex * (long)BYTES_PER_LINE;
+                long startByteOffset = startIndex * BYTES_PER_LINE;
                 if (startByteOffset >= tabInfo.ActiveFileCutoff)
                 {
                     lv.EndUpdate();
                     return;
                 }
 
-                long totalBytesToRead = (long)MAX_DISPLAY_LINES * (long)BYTES_PER_LINE;
+                long totalBytesToRead = (long)MAX_DISPLAY_LINES * BYTES_PER_LINE;
                 if (startByteOffset + totalBytesToRead > tabInfo.ActiveFileCutoff)
                 {
                     totalBytesToRead = tabInfo.ActiveFileCutoff - startByteOffset;
@@ -375,19 +366,28 @@ namespace LogFormatter
         private long GetMaxScrollableLineIndex(FileTabInfo tabInfo)
         {
             if (tabInfo == null || tabInfo.ActiveFileCutoff <= 0) return 0;
-            long totalFileLines = (long)Math.Ceiling((double)tabInfo.ActiveFileCutoff / (double)(long)BYTES_PER_LINE);
+            long totalFileLines = (long)Math.Ceiling((double)tabInfo.ActiveFileCutoff / BYTES_PER_LINE);
             return Math.Max(0, totalFileLines - 1);
         }
 
         private async Task ProcessZipFileAsync(string zipFilePath)
         {
+            if (Interlocked.Increment(ref activeZipTasks) == 1)
+            {
+                this.Cursor = Cursors.WaitCursor;
+            }
+
             string zipName = Path.GetFileName(zipFilePath);
-            WriteOutputLog($"Extracting '{zipName}'...");
-            this.Cursor = Cursors.WaitCursor;
+            WriteOutputLog($"Extracting '{zipName}' (0%)...");
 
             try
             {
                 string tempFolder = Path.Combine(Path.GetTempPath(), "LogFormatter_ZipTemp", Guid.NewGuid().ToString("N"));
+
+                var progress = new Progress<int>(percent =>
+                {
+                    WriteOutputLog($"Extracting '{zipName}' progress: {percent}%");
+                });
 
                 var targetFiles = await Task.Run(() =>
                 {
@@ -396,6 +396,15 @@ namespace LogFormatter
 
                     using (ZipArchive archive = ZipFile.OpenRead(zipFilePath))
                     {
+                        long totalBytes = archive.Entries
+                            .Where(e => !string.IsNullOrEmpty(e.Name) &&
+                                       (Path.GetExtension(e.Name).Equals(".log", StringComparison.OrdinalIgnoreCase) ||
+                                        Path.GetExtension(e.Name).Equals(".bin", StringComparison.OrdinalIgnoreCase)))
+                            .Sum(e => e.Length);
+
+                        long extractedBytes = 0;
+                        int lastReportedPercent = -1;
+
                         foreach (ZipArchiveEntry entry in archive.Entries)
                         {
                             if (string.IsNullOrEmpty(entry.Name)) continue;
@@ -415,6 +424,18 @@ namespace LogFormatter
 
                             entry.ExtractToFile(destinationPath, true);
                             extractedFiles.Add(new FileInfo(destinationPath));
+
+                            extractedBytes += entry.Length;
+
+                            if (totalBytes > 0)
+                            {
+                                int currentPercent = (int)(((double)extractedBytes / totalBytes) * 100);
+                                if (currentPercent - lastReportedPercent >= 10 || currentPercent == 100)
+                                {
+                                    lastReportedPercent = currentPercent;
+                                    ((IProgress<int>)progress).Report(currentPercent);
+                                }
+                            }
                         }
                     }
                     return extractedFiles;
@@ -438,7 +459,10 @@ namespace LogFormatter
             }
             finally
             {
-                this.Cursor = Cursors.Default;
+                if (Interlocked.Decrement(ref activeZipTasks) == 0)
+                {
+                    this.Cursor = Cursors.Default;
+                }
             }
         }
 
@@ -468,7 +492,7 @@ namespace LogFormatter
 
                                 foreach (string pattern in searchPatterns)
                                 {
-                                    files.AddRange(di.GetFiles(pattern, SearchOption.AllDirectories));
+                                    files.AddRange(di.EnumerateFiles(pattern, SearchOption.AllDirectories));
                                 }
                                 return files;
                             });
@@ -497,7 +521,7 @@ namespace LogFormatter
             }
         }
 
-        private void ResetViewButton_Click(object sender, EventArgs e)
+        private void RevertButton_Click(object sender, EventArgs e)
         {
             if (tabControlFiles == null || tabControlFiles.SelectedTab == null) return;
             TabPage currentTab = tabControlFiles.SelectedTab;
@@ -518,7 +542,7 @@ namespace LogFormatter
             if (tabInfo.VirtualScrollBar != null) tabInfo.VirtualScrollBar.Value = 0;
 
             RenderVirtualPageStream(tabInfo, 0);
-            WriteOutputLog($"Refreshed: '{Path.GetFileName(tabInfo.FilePath)}' restored to original size ({tabInfo.OriginalFileLength} bytes).", appendExtraSpace: true);
+            WriteOutputLog($"Reverted: '{Path.GetFileName(tabInfo.FilePath)}' restored to original length ({tabInfo.OriginalFileLength} bytes).", appendExtraSpace: true);
         }
 
         private void UndoFindButton_Click(object sender, EventArgs e)
@@ -541,16 +565,27 @@ namespace LogFormatter
 
             if (tabInfo.CutoffHistory.Count == 0)
             {
-                WriteOutputLog("Warning: No search history to undo.", appendExtraSpace: true);
+                WriteOutputLog("No search history to undo.", appendExtraSpace: true);
                 return;
             }
 
             tabInfo.ActiveFileCutoff = tabInfo.CutoffHistory.Pop();
             tabInfo.SelectedPingLineIndex = -1;
-            tabInfo.CurrentViewStartIndex = 0;
-            if (tabInfo.VirtualScrollBar != null) tabInfo.VirtualScrollBar.Value = 0;
 
-            RenderVirtualPageStream(tabInfo, 0);
+            long maxLineIndex = GetMaxScrollableLineIndex(tabInfo);
+            if (tabInfo.CurrentViewStartIndex > maxLineIndex)
+            {
+                tabInfo.CurrentViewStartIndex = Math.Max(0, maxLineIndex);
+            }
+
+            if (tabInfo.VirtualScrollBar != null && maxLineIndex > 0)
+            {
+                int maxScrollVal = tabInfo.VirtualScrollBar.Maximum - tabInfo.VirtualScrollBar.LargeChange + 1;
+                double ratio = (double)tabInfo.CurrentViewStartIndex / maxLineIndex;
+                tabInfo.VirtualScrollBar.Value = (int)Math.Min(maxScrollVal, Math.Max(0, ratio * maxScrollVal));
+            }
+
+            RenderVirtualPageStream(tabInfo, tabInfo.CurrentViewStartIndex);
             WriteOutputLog("Restored", appendExtraSpace: true);
         }
 
@@ -625,14 +660,27 @@ namespace LogFormatter
                         using (FileStream src = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                         using (FileStream dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
                         {
-                            byte[] buffer = new byte[8192];
+                            byte[] buffer = new byte[64 * 1024];
                             long bytesLeft = tabInfo.ActiveFileCutoff;
+                            long totalToSave = bytesLeft;
+                            int lastReportedPercent = 0;
+
                             while (bytesLeft > 0)
                             {
                                 int read = src.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesLeft));
                                 if (read <= 0) break;
                                 dst.Write(buffer, 0, read);
                                 bytesLeft -= read;
+
+                                if (totalToSave > 0)
+                                {
+                                    int currentPercent = (int)(((totalToSave - bytesLeft) / (double)totalToSave) * 100);
+                                    if (currentPercent - lastReportedPercent >= 25 || currentPercent == 100)
+                                    {
+                                        lastReportedPercent = currentPercent;
+                                        WriteOutputLog($"Saving '{currentFileName}' progress: {currentPercent}%");
+                                    }
+                                }
                             }
                         }
 
@@ -736,9 +784,9 @@ namespace LogFormatter
             string raw = input.Trim();
             string[] tokens = raw.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
 
-            bool containsExplicitWildcards = tokens.Any(t => t.Contains("?") || t.Contains(".") || t == "*");
+            bool containsExplicitWildcards = tokens.Any(t => t == "??" || t == "?" || t == ".." || t == "*");
             bool isMultiTokenHex = tokens.Length > 1 && tokens.All(t =>
-                t.Contains("?") || t.Contains(".") || t == "*" || byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out _));
+                t == "??" || t == "?" || t == ".." || t == "*" || byte.TryParse(t, System.Globalization.NumberStyles.HexNumber, null, out _));
 
             if (containsExplicitWildcards || isMultiTokenHex)
             {
@@ -747,7 +795,7 @@ namespace LogFormatter
 
                 foreach (var token in tokens)
                 {
-                    if (token == "??" || token == "?" || token == ".." || token == "." || token == "*")
+                    if (token == "??" || token == "?" || token == ".." || token == "*")
                     {
                         hexPattern.Add(null);
                     }
@@ -813,23 +861,29 @@ namespace LogFormatter
             tabInfo.CurrentSearchKeyword = rawInput;
             string fileName = Path.GetFileName(tabInfo.FilePath);
 
-            WriteOutputLog($"Searching for '{rawInput}' in [{fileName}]...");
+            WriteOutputLog($"Searching for '{rawInput}' in [{fileName}] (0%)...");
 
             try
             {
                 long? newCutoffFound = null;
 
+                var progress = new Progress<int>(percent =>
+                {
+                    WriteOutputLog($"Scanning [{fileName}] progress: {percent}%");
+                });
+
                 var searchResults = await Task.Run(() =>
                 {
                     var results = new List<SearchResultItem>();
                     long activeSearchLength = tabInfo.ActiveFileCutoff;
-                    const int BUFFER_SIZE = 4 * 1024 * 1024;
+                    const int BUFFER_SIZE = 8 * 1024 * 1024;
                     int patternLen = targetPattern.Count;
 
                     using (FileStream fs = new FileStream(tabInfo.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                     {
                         byte[] chunkBuffer = new byte[BUFFER_SIZE];
                         long filePosition = activeSearchLength;
+                        int lastReportedPercent = 0;
 
                         while (filePosition > 0)
                         {
@@ -888,6 +942,17 @@ namespace LogFormatter
                             if (chunkStartOffset <= 0) break;
 
                             filePosition = chunkStartOffset + (patternLen - 1);
+
+                            if (activeSearchLength > 0)
+                            {
+                                double scanned = activeSearchLength - filePosition;
+                                int currentPercent = (int)((scanned / activeSearchLength) * 100);
+                                if (currentPercent - lastReportedPercent >= 10)
+                                {
+                                    lastReportedPercent = currentPercent;
+                                    ((IProgress<int>)progress).Report(currentPercent);
+                                }
+                            }
                         }
                     }
 
@@ -898,6 +963,7 @@ namespace LogFormatter
 
                 if (searchResults.Count == 0)
                 {
+                    WriteOutputLog($"Scanning [{fileName}] progress: 100%");
                     WriteOutputLog($"No match found for '{rawInput}'.", appendExtraSpace: true);
                     return;
                 }
@@ -986,12 +1052,12 @@ namespace LogFormatter
             if (rtbOutput == null) return;
             if (rtbOutput.InvokeRequired)
             {
-                rtbOutput.Invoke(new Action<string, bool>(WriteOutputLog), content, appendExtraSpace);
+                rtbOutput.BeginInvoke(new Action<string, bool>(WriteOutputLog), content, appendExtraSpace);
                 return;
             }
 
             Color msgColor = Color.LightGray;
-            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Offset:") || content.Contains("Extracting"))
+            if (content.Contains("[Folder Scan]") || content.Contains("Opened") || content.Contains("Saved") || content.Contains("Offset:") || content.Contains("Extracting") || content.Contains("Reverted"))
             {
                 msgColor = Color.LimeGreen;
             }
@@ -1177,6 +1243,38 @@ namespace LogFormatter
         }
 
         private void RtbOutput_LinkClicked(object sender, LinkClickedEventArgs e) { }
+    }
+
+    public class SearchResultItem
+    {
+        public long LineIndex { get; set; }
+        public string Offset { get; set; }
+        public string HexData { get; set; }
+        public string DecodedText { get; set; }
+        public bool MatchedInHex { get; set; }
+    }
+
+    public class CustomListView : ListView
+    {
+        private const int WM_NCCALCSIZE = 0x0083;
+        private const int SB_VERT = 1;
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
+
+        public CustomListView()
+        {
+            this.DoubleBuffered = true;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg == WM_NCCALCSIZE)
+            {
+                ShowScrollBar(this.Handle, SB_VERT, false);
+            }
+        }
     }
 
     public class SaveModeDialog : Form
